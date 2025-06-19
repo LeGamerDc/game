@@ -159,7 +159,7 @@ func (n *Node) phaseInfectUp(m map[string]exprType) (up exprType, e error) {
 			if e = errors.Join(e0, e1); e != nil {
 				return 0, e
 			}
-			if up0 == exprBool && up1 == exprBool {
+			if up0 == exprBool || up1 == exprBool {
 				return 0, fmt.Errorf(fmtWrongVarType, n.Token)
 			}
 			n.Target = exprBool
@@ -181,7 +181,7 @@ func (n *Node) phaseInfectUp(m map[string]exprType) (up exprType, e error) {
 			if e = errors.Join(e0, e1); e != nil {
 				return 0, e
 			}
-			if !(up0 == exprInt || up1 == exprInt) {
+			if !(up0 == exprInt && up1 == exprInt) {
 				return 0, fmt.Errorf(fmtWrongVarType, n.Token)
 			}
 			n.Target = exprInt
@@ -190,7 +190,7 @@ func (n *Node) phaseInfectUp(m map[string]exprType) (up exprType, e error) {
 	case NodeTernary:
 		up0, e0 := n.Children[0].phaseInfectUp(m)
 		up1, e1 := n.Children[1].phaseInfectUp(m)
-		up2, e2 := n.Children[1].phaseInfectUp(m)
+		up2, e2 := n.Children[2].phaseInfectUp(m)
 		if e = errors.Join(e0, e1, e2); e != nil {
 			return 0, e
 		}

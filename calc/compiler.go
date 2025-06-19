@@ -3,8 +3,10 @@ package calc
 import (
 	"errors"
 	"fmt"
-	"github.com/legamerdc/game/blackboard"
+	"math"
 	"strconv"
+
+	"github.com/legamerdc/game/blackboard"
 )
 
 var (
@@ -281,6 +283,10 @@ func compileBool[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Fiel
 
 func binInt(op string) func(a, b int64) blackboard.Field {
 	switch op {
+	case "^":
+		return func(a, b int64) blackboard.Field {
+			return blackboard.Int64(a ^ b)
+		}
 	case "+":
 		return func(a, b int64) blackboard.Field {
 			return blackboard.Int64(a + b)
@@ -332,6 +338,10 @@ func binInt(op string) func(a, b int64) blackboard.Field {
 
 func binFloat(op string) func(a float64, b float64) blackboard.Field {
 	switch op {
+	case "^":
+		return func(a, b float64) blackboard.Field {
+			return blackboard.Float64(math.Pow(a, b))
+		}
 	case "+":
 		return func(a, b float64) blackboard.Field {
 			return blackboard.Float64(a + b)
