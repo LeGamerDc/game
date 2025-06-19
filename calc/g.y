@@ -507,11 +507,19 @@ func (l *SimpleLexer) Lex(lval *yySymType) int {
                 l.pos += 2
                 return AND
             }
+            // 单独的 & 字符是非法的，跳过并报告错误
+            l.Error(fmt.Sprintf("unexpected character '&' at position %d", l.pos))
+            l.pos++
+            continue
         case '|':
             if l.pos+1 < len(l.input) && l.input[l.pos+1] == '|' {
                 l.pos += 2
                 return OR
             }
+            // 单独的 | 字符是非法的，跳过并报告错误
+            l.Error(fmt.Sprintf("unexpected character '|' at position %d", l.pos))
+            l.pos++
+            continue
         }
         
         // 识别数字
@@ -524,7 +532,8 @@ func (l *SimpleLexer) Lex(lval *yySymType) int {
             return l.lexIdent(lval)
         }
         
-        // 未识别的字符
+        // 未识别的字符，报告错误并跳过
+        l.Error(fmt.Sprintf("unexpected character '%c' at position %d", ch, l.pos))
         l.pos++
     }
     return 0 // EOF
