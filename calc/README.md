@@ -81,19 +81,47 @@ package main
 
 import (
     "fmt"
-    "github.com/legamerdc/game/calc"
+	
     "github.com/legamerdc/game/blackboard"
 )
 
+// MockKv 实现 Kv 接口用于测试
+type MockKv struct {
+	data map[string]blackboard.Field
+}
+
+func NewMockKv() *MockKv {
+	return &MockKv{
+		data: make(map[string]blackboard.Field),
+	}
+}
+
+func (m *MockKv) Get(key string) (blackboard.Field, bool) {
+	v, ok := m.data[key]
+	return v, ok
+}
+
+func (m *MockKv) SetInt64(key string, value int64) {
+	m.data[key] = blackboard.Int64(value)
+}
+
+func (m *MockKv) SetFloat64(key string, value float64) {
+	m.data[key] = blackboard.Float64(value)
+}
+
+func (m *MockKv) SetBool(key string, value bool) {
+	m.data[key] = blackboard.Bool(value)
+}
+
 func main() {
     // 编译表达式
-    compiledFunc, err := calc.Compile[*blackboard.Blackboard]("x + y * 2")
+    compiledFunc, err := calc.Compile[*MockKv]("x + y * 2")
     if err != nil {
         panic(err)
     }
     
     // 创建变量存储
-    bb := blackboard.NewBlackboard()
+    bb := NewMockKv()
     bb.SetInt64("x", 10)
     bb.SetInt64("y", 5)
     
@@ -103,7 +131,7 @@ func main() {
         panic(err)
     }
     
-    fmt.Println(result) // 输出: 20
+    fmt.Println(result.Int64()) // 输出: 20
 }
 ```
 
