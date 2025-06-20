@@ -36,10 +36,9 @@ type Node struct {
 	Children []*Node
 }
 
-// 全局变量存储解析结果
-var parseResult *Node
+// 注意：不再使用全局变量，改为在 lexer 实例中存储结果
 
-//line g.y:37
+//line g.y:36
 type yySymType struct {
 	yys  int
 	node *Node
@@ -125,7 +124,7 @@ const yyEofCode = 1
 const yyErrCode = 2
 const yyInitialStackSize = 16
 
-//line g.y:408
+//line g.y:407
 
 // 词法分析器接口
 type Lexer interface {
@@ -135,9 +134,11 @@ type Lexer interface {
 
 // 简单的词法分析器实现
 type SimpleLexer struct {
-	input string
-	pos   int
-	line  int
+	input  string
+	pos    int
+	line   int
+	result *Node // 存储解析结果，替代全局变量
+	e      error // 存储编译过程中遇到的错误
 }
 
 func NewLexer(input string) *SimpleLexer {
@@ -145,7 +146,7 @@ func NewLexer(input string) *SimpleLexer {
 }
 
 func (l *SimpleLexer) Error(s string) {
-	fmt.Printf("语法错误 (行 %d): %s\n", l.line, s)
+	l.e = fmt.Errorf("parse fail line:%d pos:%d error:%s", l.line, l.pos, s)
 }
 
 func (l *SimpleLexer) Lex(lval *yySymType) int {
@@ -347,9 +348,9 @@ func (l *SimpleLexer) lexIdent(lval *yySymType) int {
 func parse(input string) (*Node, error) {
 	lexer := NewLexer(input)
 	if yyParse(lexer) != 0 {
-		return nil, fmt.Errorf("解析失败")
+		return nil, fmt.Errorf("fail: %v", lexer.e)
 	}
-	return parseResult, nil
+	return lexer.result, nil
 }
 
 //line yacctab:1
@@ -783,24 +784,24 @@ yydefault:
 
 	case 1:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:91
+//line g.y:90
 		{
 			if yyDollar[1].node.Type == NodeProgram {
 				yyVAL.node = yyDollar[1].node
 			} else {
 				yyVAL.node = &Node{Type: NodeProgram, Children: []*Node{yyDollar[1].node}}
 			}
-			parseResult = yyVAL.node
+			yylex.(*SimpleLexer).result = yyVAL.node
 		}
 	case 2:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:103
+//line g.y:102
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 3:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:107
+//line g.y:106
 		{
 			// 如果第一个节点不是NodeProgram类型，创建一个包装节点
 			if yyDollar[1].node.Type != NodeProgram {
@@ -812,25 +813,25 @@ yydefault:
 		}
 	case 4:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:119
+//line g.y:118
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 5:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:120
+//line g.y:119
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 6:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:121
+//line g.y:120
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 7:
 		yyDollar = yyS[yypt-2 : yypt+1]
-//line g.y:126
+//line g.y:125
 		{
 			yyVAL.node = &Node{
 				Type:  NodeVarDecl,
@@ -839,37 +840,37 @@ yydefault:
 		}
 	case 8:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:136
+//line g.y:135
 		{
 			yyVAL.str = yyDollar[1].str
 		}
 	case 9:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:140
+//line g.y:139
 		{
 			yyVAL.str = yyDollar[1].str + "," + yyDollar[3].str
 		}
 	case 10:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:146
+//line g.y:145
 		{
 			yyVAL.str = "int"
 		}
 	case 11:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:147
+//line g.y:146
 		{
 			yyVAL.str = "float"
 		}
 	case 12:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:148
+//line g.y:147
 		{
 			yyVAL.str = "bool"
 		}
 	case 13:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:153
+//line g.y:152
 		{
 			yyVAL.node = &Node{
 				Type:     NodeAssign,
@@ -879,19 +880,19 @@ yydefault:
 		}
 	case 14:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:163
+//line g.y:162
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 15:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:168
+//line g.y:167
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 16:
 		yyDollar = yyS[yypt-5 : yypt+1]
-//line g.y:172
+//line g.y:171
 		{
 			yyVAL.node = &Node{
 				Type:     NodeTernary,
@@ -901,13 +902,13 @@ yydefault:
 		}
 	case 17:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:183
+//line g.y:182
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 18:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:187
+//line g.y:186
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -917,13 +918,13 @@ yydefault:
 		}
 	case 19:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:198
+//line g.y:197
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 20:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:202
+//line g.y:201
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -933,13 +934,13 @@ yydefault:
 		}
 	case 21:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:213
+//line g.y:212
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 22:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:217
+//line g.y:216
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -949,7 +950,7 @@ yydefault:
 		}
 	case 23:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:225
+//line g.y:224
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -959,13 +960,13 @@ yydefault:
 		}
 	case 24:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:236
+//line g.y:235
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 25:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:240
+//line g.y:239
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -975,7 +976,7 @@ yydefault:
 		}
 	case 26:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:248
+//line g.y:247
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -985,7 +986,7 @@ yydefault:
 		}
 	case 27:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:256
+//line g.y:255
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -995,7 +996,7 @@ yydefault:
 		}
 	case 28:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:264
+//line g.y:263
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1005,13 +1006,13 @@ yydefault:
 		}
 	case 29:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:275
+//line g.y:274
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 30:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:279
+//line g.y:278
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1021,7 +1022,7 @@ yydefault:
 		}
 	case 31:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:287
+//line g.y:286
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1031,13 +1032,13 @@ yydefault:
 		}
 	case 32:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:298
+//line g.y:297
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 33:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:302
+//line g.y:301
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1047,7 +1048,7 @@ yydefault:
 		}
 	case 34:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:310
+//line g.y:309
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1057,7 +1058,7 @@ yydefault:
 		}
 	case 35:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:318
+//line g.y:317
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1067,13 +1068,13 @@ yydefault:
 		}
 	case 36:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:329
+//line g.y:328
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 37:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:333
+//line g.y:332
 		{
 			yyVAL.node = &Node{
 				Type:     NodeBinOp,
@@ -1083,13 +1084,13 @@ yydefault:
 		}
 	case 38:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:344
+//line g.y:343
 		{
 			yyVAL.node = yyDollar[1].node
 		}
 	case 39:
 		yyDollar = yyS[yypt-2 : yypt+1]
-//line g.y:348
+//line g.y:347
 		{
 			yyVAL.node = &Node{
 				Type:     NodeUnaryOp,
@@ -1099,7 +1100,7 @@ yydefault:
 		}
 	case 40:
 		yyDollar = yyS[yypt-2 : yypt+1]
-//line g.y:356
+//line g.y:355
 		{
 			yyVAL.node = &Node{
 				Type:     NodeUnaryOp,
@@ -1109,7 +1110,7 @@ yydefault:
 		}
 	case 41:
 		yyDollar = yyS[yypt-2 : yypt+1]
-//line g.y:364
+//line g.y:363
 		{
 			yyVAL.node = &Node{
 				Type:     NodeUnaryOp,
@@ -1119,7 +1120,7 @@ yydefault:
 		}
 	case 42:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:375
+//line g.y:374
 		{
 			yyVAL.node = &Node{
 				Type:  NodeIdent,
@@ -1128,7 +1129,7 @@ yydefault:
 		}
 	case 43:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:382
+//line g.y:381
 		{
 			yyVAL.node = &Node{
 				Type:  NodeNumber,
@@ -1137,7 +1138,7 @@ yydefault:
 		}
 	case 44:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:389
+//line g.y:388
 		{
 			yyVAL.node = &Node{
 				Type:  NodeBool,
@@ -1146,7 +1147,7 @@ yydefault:
 		}
 	case 45:
 		yyDollar = yyS[yypt-1 : yypt+1]
-//line g.y:396
+//line g.y:395
 		{
 			yyVAL.node = &Node{
 				Type:  NodeBool,
@@ -1155,7 +1156,7 @@ yydefault:
 		}
 	case 46:
 		yyDollar = yyS[yypt-3 : yypt+1]
-//line g.y:403
+//line g.y:402
 		{
 			yyVAL.node = yyDollar[2].node
 		}

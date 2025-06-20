@@ -30,8 +30,7 @@ type Node struct {
     Children []*Node
 }
 
-// 全局变量存储解析结果
-var parseResult *Node
+// 注意：不再使用全局变量，改为在 lexer 实例中存储结果
 %}
 
 %union {
@@ -94,7 +93,7 @@ program:
         } else {
             $$ = &Node{Type: NodeProgram, Children: []*Node{$1}}
         }
-        parseResult = $$
+        yylex.(*SimpleLexer).result = $$
     }
 ;
 
@@ -415,9 +414,11 @@ type Lexer interface {
 
 // 简单的词法分析器实现
 type SimpleLexer struct {
-    input string
-    pos   int
-    line  int
+    input  string
+    pos    int
+    line   int
+    result *Node  // 存储解析结果，替代全局变量
+    e      error  // 存储编译过程中遇到的错误
 }
 
 func NewLexer(input string) *SimpleLexer {
@@ -425,7 +426,7 @@ func NewLexer(input string) *SimpleLexer {
 }
 
 func (l *SimpleLexer) Error(s string) {
-    fmt.Printf("语法错误 (行 %d): %s\n", l.line, s)
+    l.e = fmt.Errorf("parse fail line:%d pos:%d error:%s", l.line, l.pos, s)
 }
 
 func (l *SimpleLexer) Lex(lval *yySymType) int {
@@ -627,7 +628,7 @@ func (l *SimpleLexer) lexIdent(lval *yySymType) int {
 func parse(input string) (*Node, error) {
     lexer := NewLexer(input)
     if yyParse(lexer) != 0 {
-        return nil, fmt.Errorf("解析失败")
+        return nil, fmt.Errorf("fail: %v", lexer.e)
     }
-    return parseResult, nil
+    return lexer.result, nil
 }
