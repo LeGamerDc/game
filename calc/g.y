@@ -446,6 +446,10 @@ func (l *SimpleLexer) Lex(lval *yySymType) int {
             l.pos++
             return SEMICOLON
         case '=':
+            if l.pos+1 < len(l.input) && l.input[l.pos+1] == '=' {
+                l.pos += 2
+                return EQ
+            }
             l.pos++
             return ASSIGN
         case '(':

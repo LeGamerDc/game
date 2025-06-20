@@ -202,17 +202,37 @@ func compileBinary[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Fi
 				return op(vv0, vv1), nil
 			}, nil
 		}
-	case "||", "&&":
-		op := binBool(n.Token)
+	case "||":
 		return func(b B) (v blackboard.Field, e error) {
 			v0, e0 := f0(b)
-			v1, e1 := f1(b)
-			if e = errors.Join(e0, e1); e != nil {
-				return
+			if e0 != nil {
+				return v, e0
 			}
 			vv0, _ := v0.Bool()
-			vv1, _ := v1.Bool()
-			return op(vv0, vv1), nil
+			if vv0 {
+				return v0, nil
+			}
+			v1, e1 := f1(b)
+			if e1 != nil {
+				return v, e1
+			}
+			return v1, nil
+		}, nil
+	case "&&":
+		return func(b B) (v blackboard.Field, e error) {
+			v0, e0 := f0(b)
+			if e0 != nil {
+				return v, e0
+			}
+			vv0, _ := v0.Bool()
+			if !vv0 {
+				return v0, nil
+			}
+			v1, e1 := f1(b)
+			if e1 != nil {
+				return v, e1
+			}
+			return v1, nil
 		}, nil
 	default:
 	}
