@@ -89,7 +89,11 @@ var parseResult *Node
 program:
     statement_list
     {
-        $$ = &Node{Type: NodeProgram, Children: []*Node{$1}}
+        if $1.Type == NodeProgram {
+            $$ = $1
+        } else {
+            $$ = &Node{Type: NodeProgram, Children: []*Node{$1}}
+        }
         parseResult = $$
     }
 ;
@@ -526,8 +530,9 @@ func (l *SimpleLexer) Lex(lval *yySymType) int {
             continue
         }
         
-        // 识别数字
-        if ch >= '0' && ch <= '9' || ch == '.' {
+        // 识别数字（包括以点开头的小数）
+        if (ch >= '0' && ch <= '9') || 
+           (ch == '.' && l.pos+1 < len(l.input) && l.input[l.pos+1] >= '0' && l.input[l.pos+1] <= '9') {
             return l.lexNumber(lval)
         }
         
@@ -546,10 +551,12 @@ func (l *SimpleLexer) Lex(lval *yySymType) int {
 func (l *SimpleLexer) lexNumber(lval *yySymType) int {
     start := l.pos
     hasDot := false
+    hasDigit := false
     
     for l.pos < len(l.input) {
         ch := l.input[l.pos]
         if ch >= '0' && ch <= '9' {
+            hasDigit = true
             l.pos++
         } else if ch == '.' && !hasDot {
             hasDot = true
@@ -560,11 +567,25 @@ func (l *SimpleLexer) lexNumber(lval *yySymType) int {
     }
     
     numStr := l.input[start:l.pos]
+    
+    // 检查是否是有效的数字格式
+    if numStr == "" || numStr == "." || !hasDigit {
+        // 回退位置，将其作为未识别字符处理
+        l.pos = start + 1
+        l.Error(fmt.Sprintf("invalid number format '%s' at position %d", 
+                          l.input[start:l.pos], start))
+        return l.Lex(lval)  // 递归调用继续处理
+    }
+    
     if _, err := strconv.ParseFloat(numStr, 64); err == nil {
         lval.str = numStr
         return NUMBER
     }
-    return 0
+    
+    // 如果数字格式无效，回退并报错
+    l.pos = start + 1
+    l.Error(fmt.Sprintf("invalid number format '%s' at position %d", numStr, start))
+    return l.Lex(lval)  // 递归调用继续处理
 }
 
 func (l *SimpleLexer) lexIdent(lval *yySymType) int {

@@ -1,7 +1,6 @@
 package calc
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/legamerdc/game/blackboard"
@@ -43,7 +42,6 @@ func TestParse(t *testing.T) {
 	assert.Nil(t, e)
 
 	_, e = parse("int x,y,z; z = (x+3)*(y+2); z % 2 == 0")
-	fmt.Println(e)
 	assert.Nil(t, e)
 
 	_, e = parse("x, y = y, x")

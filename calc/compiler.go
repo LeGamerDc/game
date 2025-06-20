@@ -42,10 +42,10 @@ func Compile[B Kv](code string) (f func(kv B) (blackboard.Field, error), e error
 	if n, e = parse(code); e != nil {
 		return nil, e
 	}
-	if len(n.Children) != 1 {
-		return nil, errors.New("invalid expression")
-	}
-	n = n.Children[0]
+	//if len(n.Children) != 1 {
+	//	return nil, errors.New("invalid expression")
+	//}
+	//n = n.Children[0]
 	//fmt.Println(dfs(n, 0))
 	if m, e = n.phaseVar(); e != nil {
 		return nil, e

@@ -5,7 +5,8 @@ import "math"
 type Kind int32
 
 const (
-	KindAny Kind = iota
+	KindEmpty Kind = iota
+	KindAny
 	KindInt32
 	KindInt64
 	KindFloat32
