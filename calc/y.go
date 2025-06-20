@@ -145,7 +145,7 @@ func NewLexer(input string) *SimpleLexer {
 }
 
 func (l *SimpleLexer) Error(s string) {
-	fmt.Printf("语法错误 (行 %d): %s\n", l.line, s)
+	// fmt.Printf("语法错误 (行 %d): %s\n", l.line, s)
 }
 
 func (l *SimpleLexer) Lex(lval *yySymType) int {

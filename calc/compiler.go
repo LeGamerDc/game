@@ -305,7 +305,7 @@ func binInt(op string) func(a, b int64) blackboard.Field {
 	switch op {
 	case "^":
 		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(a ^ b)
+			return blackboard.Int64(_ipower(a, b))
 		}
 	case "+":
 		return func(a, b int64) blackboard.Field {
@@ -407,19 +407,16 @@ func binFloat(op string) func(a float64, b float64) blackboard.Field {
 	}
 }
 
-func binBool(op string) func(a bool, b bool) blackboard.Field {
-	switch op {
-	case "&&":
-		return func(a, b bool) blackboard.Field {
-			return blackboard.Bool(a && b)
+func _ipower(a, b int64) int64 {
+	var c int64 = 1
+	for b > 0 {
+		if b&1 != 0 {
+			c *= a
 		}
-	case "||":
-		return func(a, b bool) blackboard.Field {
-			return blackboard.Bool(a || b)
-		}
-	default:
-		panic("unreachable")
+		a *= a
+		b >>= 1
 	}
+	return c
 }
 
 func _inline[I, O any](fs []func(I) (O, error)) func(I) (O, error) {
