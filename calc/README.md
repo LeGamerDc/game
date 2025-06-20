@@ -2,65 +2,53 @@
 
 Calc 是一个基于 Go 语言的表达式解析编译器，支持算术运算、逻辑运算、变量声明和赋值等功能。它使用 yacc 语法解析器来构建抽象语法树（AST），并通过类型推断和编译优化生成可执行的函数。
 
+Calc 是一个动态数值表达式编译器，将一段数值表达式代码编译成一个闭包函数，在支持类似动态脚本的灵活性的同时，提供接近原生代码的性能。
+
+```go
+f, _ := Compile("int hp,hp_max; hp / hp_max < 0.35")
+v, _ := f()
+v.Bool() // hp / hp_max < 0.35 ?
+```
+
 ## 主要功能
 
-- **表达式解析**：支持复杂的数学和逻辑表达式
-- **变量声明**：支持 `int`、`float`、`bool` 三种基本数据类型
-- **变量赋值**：支持变量赋值操作
-- **类型推断**：自动进行类型推断和转换
-- **编译优化**：将表达式编译为高效的可执行函数
-- **错误检查**：完整的语法和类型错误检查
+- **yacc 解析表达式**：支持一元、二元、三元操作符，括号表达式，赋值
+- **变量声明**：用户可以设定读取、存储黑板变量的类型，Calc会根据提供的类型生成性能最高的执行程序
+- **类型推断**：Calc 会自动推断剩余部分的类型，如果发现冲突如 `bool x;float y;x==y` 会编译器报错。类型推断会尽量保证生成高性能程序
+- **编译检测**：编译器将检查语法错误，类型错误，避免后续执行浪费运行时cpu
+- **编译优化**：Calc 做了大量编译优化，保证运行期性能。
 
-## 支持的语法
+## 语法介绍
 
-### 数据类型
-- `int`：整数类型
-- `float`：浮点数类型  
-- `bool`：布尔类型（true/false）
-
-### 变量声明
-```go
-int x               // 声明单个整数变量
-float y, z          // 声明多个浮点数变量
-bool flag           // 声明布尔变量
-bool x, z; float h; int p, q  // 混合声明
+```
+PROGRAM: STATEMENT [; STATEMENT]
+STATEMENT:
+    VAR_DEFINE |
+    ASSIGNMENT |
+    EXPR
+VAR_DEFINE: TYPE VAR_LIST
+ASSIGNMENT: TOKEN = EXPR
+EXPR:
+    UNARY_EXPR |
+    BINARY_EXPR |
+    TERNARY_EXPR
+UNARY_EXPR: OP EXPR
+BINARY_EXPR: EXPR1 OP EXPR2
+TERNARY_EXPR: EXPR ? EXPR1 : EXPR2
+OP: + | - | ! | ^ | * | / | % | || | && | == | != | < | <= | > | >=
+TYPE: int | float | bool 
 ```
 
-### 算术运算符
-- `+`：加法
-- `-`：减法
-- `*`：乘法
-- `/`：除法
-- `%`：取模（仅支持整数）
-- `^`：幂运算
+介绍语法时，可以参考上述描述文件结合来看
 
-### 比较运算符
-- `==`：等于
-- `!=`：不等于
-- `<`：小于
-- `<=`：小于等于
-- `>`：大于
-- `>=`：大于等于
-
-### 逻辑运算符
-- `&&`：逻辑与
-- `||`：逻辑或
-- `!`：逻辑非
-
-### 一元运算符
-- `+`：正号
-- `-`：负号
-- `!`：逻辑非
-
-### 三目运算符
-```go
-condition ? value_if_true : value_if_false
-```
-
-### 赋值运算符
-```go
-x = expression
-```
+- 整个程序由多个语句组成，之间用;隔开，程序的返回值由最后一个语句决定。
+- 语句可以分为类型定义、赋值、表达式
+- 类型定义为类型定义符加上,隔开的变量名字。如 "int x", "float x,y,z"
+- 赋值为变量名字 = 表达式，赋值的变量会被存储回黑板中。例如 "x = y+3"
+- 表达式为一元、二元、三元操作符递归组成。例如 "!(x || y)", "(x>3) && (y<7)", "x>3 ? y : (z+3)%7"
+- 支持的类型包括 int, float, bool。其中 int 在结合时可以根据情况转换为 float 或 bool。
+- 表达式中可以自由嵌入括号，提升执行顺序。
+- 表达式中如果读取了变量，用户需要保证黑板中存在变量，否则会报错找不到变量。
 
 ### 运算符优先级（从高到低）
 1. `!`（逻辑非）、`+`/`-`（一元）
@@ -73,116 +61,46 @@ x = expression
 8. `||`（逻辑或）
 9. `?:`（三目运算符）
 
-## 使用方法
+## 示例
 
-### 基本使用
 ```go
-package main
+blackboard := NewMockKv()
 
-import (
-    "fmt"
-	
-    "github.com/legamerdc/game/blackboard"
-)
+// 简单运算
+blackboard.SetInt64(x, 1)
+blackboard.SetInt64(y, 2)
+blackboard.SetInt64(z, 3)
+f, _ := Compile("int x,y,z; (x+y)*z")
+v, _ := f()
+v.Int64() // 9
 
-// MockKv 实现 Kv 接口用于测试
-type MockKv struct {
-	data map[string]blackboard.Field
-}
+// 赋值
+blackboard.SetFloat64(x, 2.5)
+blackboard.SetFloat64(y, 4)
+f, _ := Compile("float x,y,z; z=x*y; z > 9")
+v, _ = f()
+v.Bool() // true 10>9
+fz, _ := blackboard.Get("z")
+z, _ := fz.Float64() // 10.0
 
-func NewMockKv() *MockKv {
-	return &MockKv{
-		data: make(map[string]blackboard.Field),
-	}
-}
+// 三元操作
+f, _ := Compile("float x,y,z; z = x > 3 ? y : y+2; z > 5")
 
-func (m *MockKv) Get(key string) (blackboard.Field, bool) {
-	v, ok := m.data[key]
-	return v, ok
-}
-
-func (m *MockKv) SetInt64(key string, value int64) {
-	m.data[key] = blackboard.Int64(value)
-}
-
-func (m *MockKv) SetFloat64(key string, value float64) {
-	m.data[key] = blackboard.Float64(value)
-}
-
-func (m *MockKv) SetBool(key string, value bool) {
-	m.data[key] = blackboard.Bool(value)
-}
-
-func main() {
-    // 编译表达式
-    compiledFunc, err := calc.Compile[*MockKv]("x + y * 2")
-    if err != nil {
-        panic(err)
-    }
-    
-    // 创建变量存储
-    bb := NewMockKv()
-    bb.SetInt64("x", 10)
-    bb.SetInt64("y", 5)
-    
-    // 执行表达式
-    result, err := compiledFunc(bb)
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Println(result.Int64()) // 输出: 20
-}
+// bool 计算
+f, _ := Compile("float hp, hp_max, dist; (hp / hp_max > 0.35) && dist < 190")
 ```
 
-### 复杂表达式示例
-```go
-// 算术表达式
-"(x + y) * z"
-"x ^ 2 + y ^ 2"
+错误语法举例：
 
-// 逻辑表达式  
-"x > 0 && y < 10"
-"flag || (x == y)"
-
-// 三目运算符
-"x > 0 ? x : -x"
-"score >= 60 ? true : false"
-
-// 变量声明和赋值
-"int x, y; x = 10; y = x * 2"
-"float pi; pi = 3.14159"
-"bool result; result = x > y"
-
-// 混合表达式
-"int x, y, z; z = (x + 3) * (y + 2); z % 2 == 0"
+```
+x & y       // 不支持的操作符
+x != < y    // 无效操作
+int x, y; x + y + z     // 没有找到变量类型定义
+true + 3.15 // 错误的类型计算
+string x, y // 不支持的类型
 ```
 
-## 错误处理
-
-库提供了完整的错误检查机制：
-
-### 语法错误
-```go
-// 不支持的操作符
-"x & y"     // 错误：不支持位运算
-"x !=< y"   // 错误：非法的比较运算符
-```
-
-### 类型错误
-```go
-// 类型不匹配
-"true + 5"      // 错误：布尔值不能参与算术运算
-"x && 3.14"     // 错误：数字不能参与逻辑运算
-```
-
-### 变量错误
-```go
-// 未声明的变量类型
-"pp x, y, z"    // 错误：未知的变量类型
-```
-
-## 内部实现
+## 实现原理
 
 ### 编译流程
 1. **词法分析**：将输入字符串分解为 token
@@ -197,7 +115,6 @@ func main() {
 - `y.go`：yacc 生成的解析器代码
 - `compiler.go`：编译器核心实现
 - `infect.go`：类型推断和传播
-- `dfs.go`：语法树遍历工具
 - `compiler_test.go`：测试用例
 
 ## 注意事项
