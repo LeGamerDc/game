@@ -22,7 +22,7 @@ type (
 	Ctx interface {
 		Get(string) (blackboard.Field, bool)
 		Set(string, blackboard.Field)
-		ExecFunc(string) (blackboard.Field, bool)
+		Exec(string) (blackboard.Field, bool)
 	}
 )
 
