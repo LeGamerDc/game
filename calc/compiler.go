@@ -19,11 +19,10 @@ var (
 type (
 	exprType int32
 
-	Kv interface {
+	Ctx interface {
 		Get(string) (blackboard.Field, bool)
-		SetInt64(string, int64)
-		SetFloat64(string, float64)
-		SetBool(string, bool)
+		Set(string, blackboard.Field)
+		ExecFunc(string) (blackboard.Field, bool)
 	}
 )
 
@@ -34,7 +33,7 @@ const (
 	exprBool
 )
 
-func Compile[B Kv](code string) (f func(kv B) (blackboard.Field, error), e error) {
+func Compile[B Ctx](code string) (f func(kv B) (blackboard.Field, error), e error) {
 	var (
 		n *Node
 		m map[string]exprType
@@ -59,7 +58,7 @@ func Compile[B Kv](code string) (f func(kv B) (blackboard.Field, error), e error
 	return compile[B](n, m)
 }
 
-func compile[B Kv](n *Node, m map[string]exprType) (f func(B) (blackboard.Field, error), e error) {
+func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field, error), e error) {
 	switch n.Type {
 	case NodeProgram:
 		var fs []func(B) (blackboard.Field, error)
@@ -91,7 +90,7 @@ func compile[B Kv](n *Node, m map[string]exprType) (f func(B) (blackboard.Field,
 	panic("unreachable")
 }
 
-func compileAssign[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard.Field, error), e error) {
+func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (blackboard.Field, error), e error) {
 	var f func(B) (blackboard.Field, error)
 	if f, e = compile[B](n.Children[0], m); e != nil {
 		return nil, e
@@ -104,7 +103,7 @@ func compileAssign[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard
 				return
 			}
 			vv, _ := v.Int64()
-			b.SetInt64(token, vv)
+			b.Set(token, blackboard.Int64(vv))
 			return v, nil
 		}, nil
 	case exprFloat:
@@ -113,7 +112,7 @@ func compileAssign[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard
 				return
 			}
 			vv, _ := v.Float64()
-			b.SetFloat64(token, vv)
+			b.Set(token, blackboard.Float64(vv))
 			return v, nil
 		}, nil
 	case exprBool:
@@ -122,7 +121,7 @@ func compileAssign[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard
 				return
 			}
 			vv, _ := v.Bool()
-			b.SetBool(token, vv)
+			b.Set(token, blackboard.Bool(vv))
 			return v, nil
 		}, nil
 	default:
@@ -130,7 +129,7 @@ func compileAssign[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard
 	}
 }
 
-func compileUnary[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard.Field, error), e error) {
+func compileUnary[B Ctx](n *Node, m map[string]exprType) (fr func(B) (blackboard.Field, error), e error) {
 	var f func(B) (blackboard.Field, error)
 	if f, e = compile[B](n.Children[0], m); e != nil {
 		return nil, e
@@ -168,7 +167,7 @@ func compileUnary[B Kv](n *Node, m map[string]exprType) (fr func(B) (blackboard.
 	}
 }
 
-func compileBinary[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	f0, e0 := compile[B](n.Children[0], m)
 	f1, e1 := compile[B](n.Children[1], m)
 	if e := errors.Join(e0, e1); e != nil {
@@ -239,7 +238,7 @@ func compileBinary[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Fi
 	panic("unreachable")
 }
 
-func compileTernary[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	f0, e0 := compile[B](n.Children[0], m)
 	f1, e1 := compile[B](n.Children[1], m)
 	f2, e2 := compile[B](n.Children[2], m)
@@ -258,7 +257,7 @@ func compileTernary[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.F
 	}, nil
 }
 
-func compileIdent[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	token := n.Token
 	return func(b B) (v blackboard.Field, e error) {
 		v0, ok := b.Get(token)
@@ -269,7 +268,7 @@ func compileIdent[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Fie
 	}, nil
 }
 
-func compileNumber[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileNumber[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	f, e := strconv.ParseFloat(n.Token, 64)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
@@ -290,7 +289,7 @@ func compileNumber[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Fi
 	}, nil
 }
 
-func compileBool[B Kv](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileBool[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	f, e := strconv.ParseBool(n.Token)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)

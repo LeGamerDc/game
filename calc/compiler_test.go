@@ -57,7 +57,7 @@ func TestParse(t *testing.T) {
 	assert.NotNil(t, e)
 }
 
-// MockKv 实现 Kv 接口用于测试
+// MockKv 实现 Ctx 接口用于测试
 type MockKv struct {
 	data map[string]blackboard.Field
 }
