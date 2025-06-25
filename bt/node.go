@@ -2,6 +2,7 @@ package bt
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/legamerdc/game/blackboard"
 )
@@ -58,35 +59,10 @@ const (
 	TaskFail               = -2
 )
 
-func (c CountMode) Count(success bool) bool {
-	switch c {
-	case MatchSuccess:
-		return success
-	case MatchFail:
-		return !success
-	case MatchAll:
-		return true
-	default:
-		return false
-	}
-}
-
 var (
 	errWrongChildCount = errors.New("wrong child count")
+	fmtBadParam        = "bad param: %s"
 )
-
-func (c CountMode) Require(complete, success int32) int32 {
-	switch c {
-	case MatchSuccess:
-		return success
-	case MatchFail:
-		return complete - success
-	case MatchAll:
-		return complete
-	default:
-		return 0
-	}
-}
 
 type (
 	TaskI[C Ctx, E EI] interface {
@@ -135,12 +111,79 @@ type (
 	}
 )
 
-func (n *Node[C, E]) Check() error {
-	switch n.Type {
-
+func (c CountMode) Count(success bool) bool {
+	switch c {
+	case MatchSuccess:
+		return success
+	case MatchFail:
+		return !success
+	case MatchAll:
+		return true
+	default:
+		return false
+	}
+}
+func (c CountMode) Require(complete, success int32) int32 {
+	switch c {
+	case MatchSuccess:
+		return success
+	case MatchFail:
+		return complete - success
+	case MatchAll:
+		return complete
+	default:
+		return 0
 	}
 }
 
-func (n *Node[C, E]) Generate(Ctx) TaskI[C, E] {
+func (n *Node[C, E]) Check() error {
+	switch n.Type {
+	case TypeRevise:
+		if len(n.Children) != 1 {
+			return errWrongChildCount
+		}
+		if n.Revise == nil {
+			return fmt.Errorf(fmtBadParam, "revise")
+		}
+	case TypeRepeat, TypePostGuard, TypeAlwaysGuard:
+		if len(n.Children) != 1 {
+			return errWrongChildCount
+		}
+	case TypeGuard, TypeTask:
+		if len(n.Children) != 0 {
+			return errWrongChildCount
+		}
+	case TypeSequenceBranch, TypeStochasticBranch, TypeJoinBranch:
+		if len(n.Children) == 0 {
+			return errWrongChildCount
+		}
+	default:
+		return errors.New("unknown node type")
+	}
 	return nil
+}
+
+func (n *Node[C, E]) Generate(c C) TaskI[C, E] {
+	switch n.Type {
+	case TypeRevise:
+		return &revise[C, E]{n: n}
+	case TypeRepeat:
+		return &repeat[C, E]{n: n}
+	case TypePostGuard:
+		return &postGuard[C, E]{n: n}
+	case TypeAlwaysGuard:
+		return &alwaysCheckGuard[C, E]{n: n}
+	case TypeGuard:
+		return &guard[C, E]{n: n}
+	case TypeTask:
+		return &task[C, E]{n: n}
+	case TypeSequenceBranch:
+		return &sequenceBranch[C, E]{n: n}
+	case TypeStochasticBranch:
+		return &stochasticBranch[C, E]{n: n}
+	case TypeJoinBranch:
+		return &joinBranch[C, E]{n: n}
+	default:
+		panic("unreachable")
+	}
 }
