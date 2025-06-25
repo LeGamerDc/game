@@ -86,7 +86,7 @@ func (n *Node) phaseInfectDown(m map[string]exprType, down exprType) (e error) {
 			return fmt.Errorf(fmtWrongVarType, n.Token)
 		}
 		return errors.Join(n.Children[1].phaseInfectDown(m, n.Target), n.Children[2].phaseInfectDown(m, n.Target))
-	case NodeIdent, NodeNumber, NodeBool:
+	case NodeIdent, NodeFunc, NodeNumber, NodeBool:
 		if n.Target, ok = _infect(n.Target, down); !ok {
 			return fmt.Errorf(fmtWrongVarType, n.Token)
 		}
@@ -210,7 +210,7 @@ func (n *Node) phaseInfectUp(m map[string]exprType) (up exprType, e error) {
 			return up1, nil
 		}
 		return 0, fmt.Errorf(fmtWrongVarType, n.Token)
-	case NodeIdent:
+	case NodeIdent, NodeFunc:
 		et, ok := m[n.Token]
 		if !ok {
 			return 0, fmt.Errorf(fmtVariableType, n.Token)

@@ -73,6 +73,31 @@ func (m *MockKv) Get(key string) (blackboard.Field, bool) {
 	return v, ok
 }
 
+func (m *MockKv) Set(key string, v blackboard.Field) {
+	m.data[key] = v
+}
+
+func (m *MockKv) Del(key string) {
+	delete(m.data, key)
+}
+
+func (m *MockKv) Exec(key string) (v blackboard.Field, ok bool) {
+	v1, ok1 := m.getInt64("_1")
+	if !ok1 {
+		return
+	}
+	return blackboard.Int64(v1 * v1), true
+}
+
+func (m *MockKv) getInt64(key string) (int64, bool) {
+	v1, ok1 := m.Get(key)
+	if !ok1 {
+		return 0, false
+	}
+	vv, ok2 := v1.Int64()
+	return vv, ok2
+}
+
 func (m *MockKv) SetInt64(key string, value int64) {
 	m.data[key] = blackboard.Int64(value)
 }
@@ -296,6 +321,23 @@ func TestCompile(t *testing.T) {
 		v, ok := result.Float64()
 		assert.True(t, ok)
 		assert.InDelta(t, 3.14159, v, 0.00001)
+	})
+
+	// 测试函数调用
+	t.Run("函数调用", func(t *testing.T) {
+		f, e := Compile[*MockKv]("int x, ff, _1; _1=x; ff()+2*x+1")
+		assert.Nil(t, e)
+
+		kv := NewMockKv()
+		kv.SetInt64("x", 2)
+		v, e1 := f(kv)
+		assert.Nil(t, e1)
+		vv, ok := v.Int64()
+		assert.True(t, ok)
+		assert.InDelta(t, 9.0, vv, 0.00001)
+
+		_, ok = kv.Get("_1")
+		assert.False(t, ok)
 	})
 }
 

@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/legamerdc/game/blackboard"
 )
 
 var (
 	fmtWrongVarType = "wrong variable type: %s"
-	fmtVariableType = "variable type unknown: %s"
-	fmtKeyMiss      = "key miss: %s"
-	fmtConstFormat  = "const format: %s"
+	fmtVariableType = "variable undefined: %s"
+	fmtKeyMiss      = "key not set: %s"
+	fmtConstFormat  = "number ill format: %s"
+	fmtIllFunc      = "ill func: %s"
 )
 
 type (
@@ -22,6 +24,7 @@ type (
 	Ctx interface {
 		Get(string) (blackboard.Field, bool)
 		Set(string, blackboard.Field)
+		Del(string)
 		Exec(string) (blackboard.Field, bool)
 	}
 )
@@ -61,7 +64,7 @@ func Compile[B Ctx](code string) (f func(kv B) (blackboard.Field, error), e erro
 func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field, error), e error) {
 	switch n.Type {
 	case NodeProgram:
-		var fs []func(B) (blackboard.Field, error)
+		fs := make([]func(B) (blackboard.Field, error), 0, len(n.Children)+1)
 		for _, x := range n.Children {
 			if x.Type != NodeVarDecl {
 				if f, e = compile[B](x, m); e != nil {
@@ -69,6 +72,14 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field
 				}
 				fs = append(fs, f)
 			}
+		}
+		if tmpKeys := _tmpKeys(m); len(tmpKeys) > 0 {
+			return _after(_inline(fs), func(b B) (blackboard.Field, error) {
+				for _, k := range tmpKeys {
+					b.Del(k)
+				}
+				return blackboard.Field{}, nil
+			}), nil
 		}
 		return _inline(fs), nil
 	case NodeAssign:
@@ -81,6 +92,8 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field
 		return compileTernary[B](n, m)
 	case NodeIdent:
 		return compileIdent[B](n, m)
+	case NodeFunc:
+		return compileFunc[B](n, m)
 	case NodeNumber:
 		return compileNumber[B](n, m)
 	case NodeBool:
@@ -257,7 +270,18 @@ func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.
 	}, nil
 }
 
-func compileIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileFunc[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
+	token := n.Token
+	return func(b B) (v blackboard.Field, e error) {
+		v0, ok := b.Exec(token)
+		if !ok {
+			return v, fmt.Errorf(fmtIllFunc, token)
+		}
+		return v0, nil
+	}, nil
+}
+
+func compileIdent[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	token := n.Token
 	return func(b B) (v blackboard.Field, e error) {
 		v0, ok := b.Get(token)
@@ -268,7 +292,7 @@ func compileIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Fi
 	}, nil
 }
 
-func compileNumber[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileNumber[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	f, e := strconv.ParseFloat(n.Token, 64)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
@@ -289,7 +313,7 @@ func compileNumber[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 	}, nil
 }
 
-func compileBool[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileBool[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
 	f, e := strconv.ParseBool(n.Token)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
@@ -419,7 +443,7 @@ func _ipower(a, b int64) int64 {
 }
 
 func _inline[I, O any](fs []func(I) (O, error)) func(I) (O, error) {
-	// 对常见的参数数量[0-4]做内联，加快函数调用
+	// 对常见的参数数量[0-5]做内联，加快函数调用
 	switch l := len(fs); l {
 	case 0:
 		return func(I) (o O, e error) {
@@ -464,6 +488,19 @@ func _inline[I, O any](fs []func(I) (O, error)) func(I) (O, error) {
 			}
 			return o3, nil
 		}
+	case 5:
+		f0, f1, f2, f3, f4 := fs[0], fs[1], fs[2], fs[3], fs[4]
+		return func(i I) (o O, e error) {
+			_, e0 := f0(i)
+			_, e1 := f1(i)
+			_, e2 := f2(i)
+			_, e3 := f3(i)
+			o4, e4 := f4(i)
+			if e = errors.Join(e0, e1, e2, e3, e4); e != nil {
+				return
+			}
+			return o4, nil
+		}
 	default:
 		return func(i I) (o O, e error) {
 			for _, f := range fs {
@@ -486,4 +523,23 @@ func _string2type(s string) (exprType, error) {
 		return exprBool, nil
 	}
 	return -1, fmt.Errorf(fmtWrongVarType, s)
+}
+
+func _tmpKeys(m map[string]exprType) (keys []string) {
+	for k := range m {
+		if strings.HasPrefix(k, "_") {
+			keys = append(keys, k)
+		}
+	}
+	return
+}
+
+func _after[B any](f, after func(B) (blackboard.Field, error)) func(B) (blackboard.Field, error) {
+	return func(b B) (v blackboard.Field, e error) {
+		if v, e = f(b); e != nil {
+			return
+		}
+		_, _ = after(b)
+		return v, nil
+	}
 }

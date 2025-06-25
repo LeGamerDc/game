@@ -18,6 +18,7 @@ const (
     NodeUnaryOp
     NodeTernary
     NodeIdent
+    NodeFunc
     NodeNumber
     NodeBool
 )
@@ -374,6 +375,13 @@ primary_expr:
     {
         $$ = &Node{
             Type: NodeIdent,
+            Token: $1,
+        }
+    }
+|   IDENT LPAREN RPAREN
+    {
+        $$ = &Node{
+            Type: NodeFunc,
             Token: $1,
         }
     }

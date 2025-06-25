@@ -124,11 +124,6 @@ string x, y // 不支持的类型
 3. **内存管理**：使用 blackboard 模式管理变量，避免内存泄漏
 4. **错误友好**：提供详细的错误信息，便于调试
 
-## 依赖项
-
-- `github.com/legamerdc/game/blackboard`：变量存储和管理
-- `github.com/stretchr/testify/assert`：测试断言库
-
 ## 许可证
 
 本项目采用开源许可证，具体请参考项目根目录的 LICENSE 文件。 
