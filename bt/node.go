@@ -172,7 +172,7 @@ func (n *Node[C, E]) Generate(c C) TaskI[C, E] {
 	case TypePostGuard:
 		return &postGuard[C, E]{n: n}
 	case TypeAlwaysGuard:
-		return &alwaysCheckGuard[C, E]{n: n}
+		return &alwaysGuard[C, E]{n: n}
 	case TypeGuard:
 		return &guard[C, E]{n: n}
 	case TypeTask:

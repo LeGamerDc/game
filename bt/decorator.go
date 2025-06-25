@@ -97,33 +97,33 @@ func (x *postGuard[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskSt
 	return TaskSuccess
 }
 
-// alwaysCheckGuard 每次update时，都会检查guard是否通过
-// alwaysCheckGuard 会本地重建栈，因此他自己是一个leaf task
-type alwaysCheckGuard[C Ctx, E EI] struct {
+// alwaysGuard 每次update时，都会检查guard是否通过
+// alwaysGuard 会本地重建栈，因此他自己是一个leaf task
+type alwaysGuard[C Ctx, E EI] struct {
 	n      *Node[C, E]
 	parent TaskI[C, E]
 	r      Root[C, E]
 }
 
-func (x *alwaysCheckGuard[C, E]) SetParent(n TaskI[C, E]) {
+func (x *alwaysGuard[C, E]) SetParent(n TaskI[C, E]) {
 	x.parent = n
 }
 
-func (x *alwaysCheckGuard[C, E]) Parent() TaskI[C, E] {
+func (x *alwaysGuard[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *alwaysCheckGuard[C, E]) OnComplete(cancel bool) {
+func (x *alwaysGuard[C, E]) OnComplete(cancel bool) {
 	if cancel {
 		x.r.Cancel()
 	}
 }
 
-func (x *alwaysCheckGuard[C, E]) OnEvent(c C, e E) TaskStatus {
+func (x *alwaysGuard[C, E]) OnEvent(c C, e E) TaskStatus {
 	return x.r.OnEvent(c, e)
 }
 
-func (x *alwaysCheckGuard[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskStatus {
+func (x *alwaysGuard[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskStatus {
 	if s := checkGuard(x.n, c); s != TaskSuccess {
 		return s
 	}
@@ -168,7 +168,11 @@ func (x *task[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *task[C, E]) OnComplete(_ bool) {}
+func (x *task[C, E]) OnComplete(cancel bool) {
+	if x.tt == nil {
+		x.tt.OnComplete(cancel)
+	}
+}
 
 func (x *task[C, E]) OnEvent(c C, e E) TaskStatus {
 	return x.tt.OnEvent(c, e)

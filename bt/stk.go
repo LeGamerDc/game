@@ -70,6 +70,7 @@ func top[C Ctx, E EI](s *TaskI[C, E]) TaskI[C, E] {
 func pop[C Ctx, E EI](s *TaskI[C, E]) TaskI[C, E] {
 	v := *s
 	*s = (*s).Parent()
+	v.SetParent(nil)
 	return v
 }
 

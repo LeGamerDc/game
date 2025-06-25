@@ -101,11 +101,9 @@ func (x *joinBranch[C, E]) Parent() TaskI[C, E] {
 }
 
 func (x *joinBranch[C, E]) OnComplete(cancel bool) {
-	if cancel {
-		for i := range x.roots {
-			if x.tasks[i] >= TaskRunning {
-				x.roots[i].Cancel()
-			}
+	for i := range x.roots {
+		if x.tasks[i] >= TaskRunning {
+			x.roots[i].Cancel()
 		}
 	}
 }
