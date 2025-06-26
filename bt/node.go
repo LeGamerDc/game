@@ -100,12 +100,12 @@ type (
 
 	Node[C Ctx, E EI] struct {
 		Type      NodeType
-		Children  []Node[C, E]
+		Children  []*Node[C, E]
 		MaxLoop   int32
 		Require   int32
 		CountMode CountMode
 
-		Guard  func(C) (blackboard.Field, error)
+		Guard  Guard[C]
 		Task   TaskCreator[C, E]
 		Revise func(TaskStatus) TaskStatus
 	}
@@ -136,6 +136,160 @@ func (c CountMode) Require(complete, success int32) int32 {
 	}
 }
 
+func NewSuccess[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	return &Node[C, E]{
+		Type:     TypeRevise,
+		Children: []*Node[C, E]{ch},
+		Guard:    g,
+		Revise:   _success,
+	}
+}
+
+func NewFail[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	return &Node[C, E]{
+		Type:     TypeRevise,
+		Children: []*Node[C, E]{ch},
+		Guard:    g,
+		Revise:   _fail,
+	}
+}
+
+func NewInverter[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	return &Node[C, E]{
+		Type:     TypeRevise,
+		Children: []*Node[C, E]{ch},
+		Guard:    g,
+		Revise:   _invert,
+	}
+}
+
+// NewRepeatUntilNSuccess 持续运行子树，直到完成require次Success，若maxLoop后未完成则返回Fail
+func NewRepeatUntilNSuccess[C Ctx, E EI](g Guard[C], require, maxLoop int32, ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	return &Node[C, E]{
+		Type:      TypeRepeat,
+		Children:  []*Node[C, E]{ch},
+		MaxLoop:   maxLoop,
+		Require:   require,
+		CountMode: MatchSuccess,
+		Guard:     g,
+	}
+}
+
+// NewPostGuard 运行子树后再check guard，并用guard的返回值充当结果
+func NewPostGuard[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	return &Node[C, E]{
+		Type:     TypePostGuard,
+		Children: []*Node[C, E]{ch},
+		Guard:    g,
+	}
+}
+
+// NewAlwaysGuard 行为树每次Update时都检查guard，若检测失败Cancel子树后返回
+func NewAlwaysGuard[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	return &Node[C, E]{
+		Type:     TypeAlwaysGuard,
+		Children: []*Node[C, E]{ch},
+		Guard:    g,
+	}
+}
+
+// NewTask 运行用户指定逻辑的leaf task
+func NewTask[C Ctx, E EI](g Guard[C], task TaskCreator[C, E], ch *Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	_assert(task != nil)
+	return &Node[C, E]{
+		Type:     TypeTask,
+		Children: []*Node[C, E]{ch},
+		Guard:    g,
+		Task:     task,
+	}
+}
+
+// NewSelector 遍历执行子树，发现成功提前退出并成功，全部失败算失败
+func NewSelector[C Ctx, E EI](g Guard[C], shuffle bool, ch ...*Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	_assert(len(ch) > 0)
+	for _, c := range ch {
+		_assert(c != nil)
+	}
+	t := TypeSequenceBranch
+	if shuffle {
+		t = TypeStochasticBranch
+	}
+	return &Node[C, E]{
+		Type:      t,
+		Children:  ch,
+		Require:   1,
+		CountMode: MatchSuccess,
+		Guard:     g,
+	}
+}
+
+// NewSelectorN 遍历执行子树，直到发现N个成功提前退出并成功，执行完毕则失败
+func NewSelectorN[C Ctx, E EI](g Guard[C], n int32, shuffle bool, ch ...*Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	_assert(len(ch) > 0)
+	_assert(n > 0 && n <= int32(len(ch)))
+	for _, c := range ch {
+		_assert(c != nil)
+	}
+	t := TypeSequenceBranch
+	if shuffle {
+		t = TypeStochasticBranch
+	}
+	return &Node[C, E]{
+		Type:      t,
+		Children:  ch,
+		Require:   n,
+		CountMode: MatchSuccess,
+		Guard:     g,
+	}
+}
+
+// NewSequence 遍历执行子树，全部成功算成功，发现失败提前退出并失败
+func NewSequence[C Ctx, E EI](g Guard[C], shuffle bool, ch ...*Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	_assert(len(ch) > 0)
+	for _, c := range ch {
+		_assert(c != nil)
+	}
+	t := TypeSequenceBranch
+	if shuffle {
+		t = TypeStochasticBranch
+	}
+	return &Node[C, E]{
+		Type:      t,
+		Children:  ch,
+		Require:   int32(len(ch)),
+		CountMode: MatchSuccess,
+		Guard:     g,
+	}
+}
+
+// NewParallel 同时执行所有子树，直到已经完成的子树状态按照mode满足require并提前结束Cancel剩余未结束子树返回成功，否则返回失败。
+func NewParallel[C Ctx, E EI](g Guard[C], mode CountMode, require int32, ch ...*Node[C, E]) *Node[C, E] {
+	_assert(ch != nil)
+	_assert(len(ch) > 0)
+	_assert(require > 0 && require <= int32(len(ch)))
+	for _, c := range ch {
+		_assert(c != nil)
+	}
+	return &Node[C, E]{
+		Type:      TypeJoinBranch,
+		Children:  ch,
+		Require:   require,
+		CountMode: mode,
+		Guard:     g,
+	}
+}
+
+// Check 用户自设参数时，调用Check检查参数是否合理
 func (n *Node[C, E]) Check() error {
 	switch n.Type {
 	case TypeRevise:
@@ -156,6 +310,9 @@ func (n *Node[C, E]) Check() error {
 	case TypeSequenceBranch, TypeStochasticBranch, TypeJoinBranch:
 		if len(n.Children) == 0 {
 			return errWrongChildCount
+		}
+		if n.Revise == nil {
+			return fmt.Errorf(fmtBadParam, "revise")
 		}
 	default:
 		return errors.New("unknown node type")
@@ -186,4 +343,29 @@ func (n *Node[C, E]) Generate(c C) TaskI[C, E] {
 	default:
 		panic("unreachable")
 	}
+}
+
+func _assert(x bool) {
+	if !x {
+		panic("assertion")
+	}
+}
+
+func _direct(x TaskStatus) TaskStatus {
+	return x
+}
+
+func _invert(x TaskStatus) TaskStatus {
+	if x == TaskSuccess {
+		return TaskFail
+	}
+	return TaskSuccess
+}
+
+func _success(_ TaskStatus) TaskStatus {
+	return TaskSuccess
+}
+
+func _fail(_ TaskStatus) TaskStatus {
+	return TaskFail
 }

@@ -3,10 +3,10 @@ package bt
 // Root 行为树任务树的子树入口。
 type Root[C Ctx, E EI] struct {
 	stk TaskI[C, E]
-	n   Node[C, E]
+	n   *Node[C, E]
 }
 
-func (r *Root[C, E]) SetNode(n Node[C, E]) {
+func (r *Root[C, E]) SetNode(n *Node[C, E]) {
 	r.n = n
 }
 
