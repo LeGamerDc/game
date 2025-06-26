@@ -40,9 +40,11 @@ func (r *Root[C, E]) OnEvent(c C, e E) (next TaskStatus) {
 		if !ok {
 			return TaskNew
 		}
-		if next = vv.OnEvent(c, e); next >= TaskRunning {
+		if next = vv.OnEvent(c, e); next >= TaskNew {
+			// 叶节点处理后仍处于Running 或 无法处理 event
 			return next
 		}
+		// 叶节点处理 event 后完成任务，转为正常执行
 		pop(&r.stk)
 		v.OnComplete(false)
 

@@ -54,9 +54,9 @@ const (
 // <= -2 : Fail
 const (
 	TaskRunning TaskStatus = 1
-	TaskNew                = 0
-	TaskSuccess            = -1
-	TaskFail               = -2
+	TaskNew     TaskStatus = 0
+	TaskSuccess TaskStatus = -1
+	TaskFail    TaskStatus = -2
 )
 
 var (
@@ -349,10 +349,6 @@ func _assert(x bool) {
 	if !x {
 		panic("assertion")
 	}
-}
-
-func _direct(x TaskStatus) TaskStatus {
-	return x
 }
 
 func _invert(x TaskStatus) TaskStatus {

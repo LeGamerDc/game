@@ -109,15 +109,15 @@ func (x *joinBranch[C, E]) OnComplete(cancel bool) {
 }
 
 func (x *joinBranch[C, E]) OnEvent(c C, e E) TaskStatus {
-	next := int32(-1)
+	next := TaskNew
 	for i := range x.roots {
 		if x.tasks[i] >= TaskRunning {
 			x.tasks[i] = x.roots[i].OnEvent(c, e)
 			if x.tasks[i] >= TaskRunning {
-				if next == -1 {
-					next = int32(x.tasks[i])
+				if next == TaskNew {
+					next = x.tasks[i]
 				} else {
-					next = min(next, int32(x.tasks[i]))
+					next = min(next, x.tasks[i])
 				}
 			} else {
 				x.complete++
@@ -133,7 +133,7 @@ func (x *joinBranch[C, E]) OnEvent(c C, e E) TaskStatus {
 	if x.complete >= int32(len(x.roots)) {
 		return TaskFail
 	}
-	return TaskStatus(next)
+	return next
 }
 
 func (x *joinBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus {
