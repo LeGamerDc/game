@@ -90,7 +90,7 @@ type (
 		// OnComplete 任务执行完毕后会调用OnComplete，用户可以在这里回收资源。
 		// cancel 标记该任务是被取消的还是正常结束的。
 		OnComplete(cancel bool)
-		// OnEvent 事件驱动接口，用于处理外部事件。
+		// OnEvent 事件驱动接口，用于处理外部事件。返回0表示无法处理这个信号，返回s>0的值表示任务仍然Running并预估bt应该在s后再次Update。
 		OnEvent(C, E) TaskStatus
 	}
 
@@ -108,6 +108,8 @@ type (
 		Guard  Guard[C]
 		Task   TaskCreator[C, E]
 		Revise func(TaskStatus) TaskStatus
+		// OnEvent 事件驱动接口，用于处理外部事件。返回0表示无法处理这个信号，返回s>0的值表示任务仍然Running并预估bt应该在s后再次Update。
+		OnEvent func(C, E) TaskStatus
 	}
 )
 
@@ -199,15 +201,21 @@ func NewAlwaysGuard[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
 	}
 }
 
+// NewGuard 运行用户指定逻辑的guard
+func NewGuard[C Ctx, E EI](g Guard[C]) *Node[C, E] {
+	return &Node[C, E]{
+		Type:  TypeGuard,
+		Guard: g,
+	}
+}
+
 // NewTask 运行用户指定逻辑的leaf task
-func NewTask[C Ctx, E EI](g Guard[C], task TaskCreator[C, E], ch *Node[C, E]) *Node[C, E] {
-	_assert(ch != nil)
+func NewTask[C Ctx, E EI](g Guard[C], task TaskCreator[C, E]) *Node[C, E] {
 	_assert(task != nil)
 	return &Node[C, E]{
-		Type:     TypeTask,
-		Children: []*Node[C, E]{ch},
-		Guard:    g,
-		Task:     task,
+		Type:  TypeTask,
+		Guard: g,
+		Task:  task,
 	}
 }
 
@@ -310,9 +318,6 @@ func (n *Node[C, E]) Check() error {
 	case TypeSequenceBranch, TypeStochasticBranch, TypeJoinBranch:
 		if len(n.Children) == 0 {
 			return errWrongChildCount
-		}
-		if n.Revise == nil {
-			return fmt.Errorf(fmtBadParam, "revise")
 		}
 	default:
 		return errors.New("unknown node type")
