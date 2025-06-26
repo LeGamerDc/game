@@ -61,11 +61,27 @@ func (n *Node) phaseInfectDown(m map[string]exprType, down exprType) (e error) {
 		return n.Children[0].phaseInfectDown(m, n.Target)
 	case NodeBinOp:
 		switch n.Token {
-		case "^", "+", "-", "*", "/", "==", "!=", "<", "<=", ">", ">=":
+		case "^", "+", "-", "*", "/":
 			if n.Target, ok = _infect(n.Target, down); !ok {
 				return fmt.Errorf(fmtWrongVarType, n.Token)
 			}
 			return errors.Join(n.Children[0].phaseInfectDown(m, n.Target), n.Children[1].phaseInfectDown(m, n.Target))
+		case "==", "!=", "<", "<=", ">", ">=":
+			if n.Target, ok = _infect(n.Target, down); !ok {
+				return fmt.Errorf(fmtWrongVarType, n.Token)
+			}
+			l, r := n.Children[0].Target, n.Children[1].Target
+			if (l == exprBool && r == exprFloat) || (l == exprFloat && r == exprBool) {
+				return fmt.Errorf(fmtWrongVarType, n.Token)
+			}
+			target := exprInt
+			if l == exprFloat || r == exprFloat {
+				target = exprFloat
+			}
+			if l == exprBool || r == exprBool {
+				target = exprBool
+			}
+			return errors.Join(n.Children[0].phaseInfectDown(m, target), n.Children[1].phaseInfectDown(m, target))
 		case "||", "&&":
 			return errors.Join(n.Children[0].phaseInfectDown(m, exprBool), n.Children[1].phaseInfectDown(m, exprBool))
 		case "%":
