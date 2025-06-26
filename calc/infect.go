@@ -61,23 +61,13 @@ func (n *Node) phaseInfectDown(m map[string]exprType, down exprType) (e error) {
 		return n.Children[0].phaseInfectDown(m, n.Target)
 	case NodeBinOp:
 		switch n.Token {
-		case "^", "+", "-", "*", "/":
+		case "^", "+", "-", "*", "/", "==", "!=", "<", "<=", ">", ">=":
 			if n.Target, ok = _infect(n.Target, down); !ok {
 				return fmt.Errorf(fmtWrongVarType, n.Token)
 			}
 			return errors.Join(n.Children[0].phaseInfectDown(m, n.Target), n.Children[1].phaseInfectDown(m, n.Target))
 		case "||", "&&":
 			return errors.Join(n.Children[0].phaseInfectDown(m, exprBool), n.Children[1].phaseInfectDown(m, exprBool))
-		case "==", "!=", "<", "<=", ">", ">=":
-			l, r := n.Children[0].Target, n.Children[1].Target
-			if l == exprBool || r == exprBool {
-				return fmt.Errorf(fmtWrongVarType, n.Token)
-			}
-			target := exprInt
-			if l == exprFloat || r == exprFloat {
-				target = exprFloat
-			}
-			return errors.Join(n.Children[0].phaseInfectDown(m, target), n.Children[1].phaseInfectDown(m, target))
 		case "%":
 			return errors.Join(n.Children[0].phaseInfectDown(m, exprInt), n.Children[1].phaseInfectDown(m, exprInt))
 		}
@@ -153,7 +143,25 @@ func (n *Node) phaseInfectUp(m map[string]exprType) (up exprType, e error) {
 			}
 			n.Target = up
 			return up, nil
-		case "==", "!=", "<", "<=", ">", ">=":
+		case "==", "!=":
+			l, e0 := n.Children[0].phaseInfectUp(m)
+			r, e1 := n.Children[1].phaseInfectUp(m)
+			if e = errors.Join(e0, e1); e != nil {
+				return 0, e
+			}
+			if (l == exprBool && r == exprFloat) || (l == exprFloat && r == exprBool) {
+				return 0, fmt.Errorf(fmtWrongVarType, n.Token)
+			}
+			target := exprInt
+			if l == exprFloat || r == exprFloat {
+				target = exprFloat
+			}
+			if l == exprBool || r == exprBool {
+				target = exprBool
+			}
+			n.Target = target
+			return target, nil
+		case "<", "<=", ">", ">=":
 			up0, e0 := n.Children[0].phaseInfectUp(m)
 			up1, e1 := n.Children[1].phaseInfectUp(m)
 			if e = errors.Join(e0, e1); e != nil {

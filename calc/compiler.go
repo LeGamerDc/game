@@ -187,7 +187,22 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 		return nil, e
 	}
 	switch n.Token {
-	case "^", "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=":
+	case "==", "!=":
+		if n.Children[0].Target == exprBool {
+			op := binBool(n.Token)
+			return func(b B) (v blackboard.Field, e error) {
+				v0, e0 := f0(b)
+				v1, e1 := f1(b)
+				if e = errors.Join(e0, e1); e != nil {
+					return
+				}
+				vv0, _ := v0.Bool()
+				vv1, _ := v1.Bool()
+				return op(vv0, vv1), nil
+			}, nil
+		}
+		fallthrough
+	case "^", "+", "-", "*", "/", "%", "<", "<=", ">", ">=":
 		if n.Children[0].Target == exprInt {
 			op := binInt(n.Token)
 			return func(b B) (v blackboard.Field, e error) {
@@ -424,6 +439,21 @@ func binFloat(op string) func(a float64, b float64) blackboard.Field {
 	case ">=":
 		return func(a, b float64) blackboard.Field {
 			return blackboard.Bool(a >= b)
+		}
+	default:
+		panic("unreachable")
+	}
+}
+
+func binBool(op string) func(a, b bool) blackboard.Field {
+	switch op {
+	case "==":
+		return func(a, b bool) blackboard.Field {
+			return blackboard.Bool(a == b)
+		}
+	case "!=":
+		return func(a, b bool) blackboard.Field {
+			return blackboard.Bool(a != b)
 		}
 	default:
 		panic("unreachable")

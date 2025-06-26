@@ -119,20 +119,6 @@ func (x *alwaysGuard[C, E]) OnComplete(cancel bool) {
 	}
 }
 
-func (x *alwaysGuard[C, E]) OnEvent(c C, e E) TaskStatus {
-	if x.n.OnEvent != nil {
-		// 如果alwaysGuard接受信号，并被信号打断，则直接退出任务。
-		s := x.n.OnEvent(c, e)
-		if s >= TaskNew {
-			return x.r.OnEvent(c, e)
-		}
-		// 不是正常的Cancel流程，需要手动Cancel
-		x.r.Cancel()
-		return s
-	}
-	return x.r.OnEvent(c, e)
-}
-
 func (x *alwaysGuard[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskStatus {
 	if s := checkGuard(x.n, c); s != TaskSuccess {
 		return s

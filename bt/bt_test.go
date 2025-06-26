@@ -29,22 +29,6 @@ func (c *testCtx) Del(key string) {
 	delete(c.bb, key)
 }
 
-func (c *testCtx) Exec(expr string) (blackboard.Field, error) {
-	// 简单的表达式执行器，用于测试
-	switch expr {
-	case "true":
-		return blackboard.Bool(true), nil
-	case "false":
-		return blackboard.Bool(false), nil
-	default:
-		v, ok := c.bb[expr]
-		if !ok {
-			return blackboard.Bool(false), nil
-		}
-		return v, nil
-	}
-}
-
 // 测试用的事件类型
 type testEvent struct {
 	kind int32

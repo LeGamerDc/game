@@ -24,7 +24,6 @@ type (
 		Get(string) (blackboard.Field, bool)
 		Set(string, blackboard.Field)
 		Del(string)
-		Exec(string) (blackboard.Field, error)
 	}
 )
 
@@ -108,8 +107,6 @@ type (
 		Guard  Guard[C]
 		Task   TaskCreator[C, E]
 		Revise func(TaskStatus) TaskStatus
-		// OnEvent 事件驱动接口，用于处理外部事件。返回0表示无法处理这个信号，返回s>0的值表示任务仍然Running并预估bt应该在s后再次Update。
-		OnEvent func(C, E) TaskStatus
 	}
 )
 
