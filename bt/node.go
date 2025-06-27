@@ -78,7 +78,8 @@ type (
 	// EventTask 只有叶子节点（包括重建栈的节点）且可能处于TaskRunning状态才需要实现 OnEvent
 	// 用于实时响应事件完成任务。
 	EventTask[C Ctx, E EI] interface {
-		// OnEvent 实时响应事件，如果响应后任务完成，则返回 TaskSuccess/TaskFail
+		// OnEvent 实时响应事件，如果响应后任务完成，则返回 TaskSuccess/TaskFail，如果无法处理事件返回 TaskNew，
+		// 如果事件处理后任务仍然处于Running状态，则返回一个正数表示预估bt应该在s后再次Update。
 		OnEvent(C, E) TaskStatus
 	}
 
@@ -89,12 +90,14 @@ type (
 		// OnComplete 任务执行完毕后会调用OnComplete，用户可以在这里回收资源。
 		// cancel 标记该任务是被取消的还是正常结束的。
 		OnComplete(c C, cancel bool)
-		// OnEvent 事件驱动接口，用于处理外部事件。返回0表示无法处理这个信号，返回s>0的值表示任务仍然Running并预估bt应该在s后再次Update。
+		// OnEvent 事件驱动接口，用于处理外部事件。返回TaskNew表示无法处理这个信号，返回s>0的值表示任务仍然Running并预估bt应该在s后再次Update。
 		OnEvent(C, E) TaskStatus
 	}
 
+	// TaskCreator 创建叶节点的函数抽象，如果创建失败返回 false，该节点会立即失败
 	TaskCreator[C Ctx, E EI] func(C) (LeafTaskI[C, E], bool)
 
+	// Guard 节点前置检查，如果检查失败节点不会执行，而是直接返回失败，如果检查报错也当做检查失败。
 	Guard[C Ctx] func(C) (blackboard.Field, error)
 
 	Node[C Ctx, E EI] struct {
