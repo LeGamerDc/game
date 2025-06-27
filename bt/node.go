@@ -236,6 +236,7 @@ func NewSelector[C Ctx, E EI](g Guard[C], shuffle bool, ch ...*Node[C, E]) *Node
 		Require:   1,
 		CountMode: MatchSuccess,
 		Guard:     g,
+		Revise:    _direct,
 	}
 }
 
@@ -257,6 +258,7 @@ func NewSelectorN[C Ctx, E EI](g Guard[C], n int32, shuffle bool, ch ...*Node[C,
 		Require:   n,
 		CountMode: MatchSuccess,
 		Guard:     g,
+		Revise:    _direct,
 	}
 }
 
@@ -274,9 +276,10 @@ func NewSequence[C Ctx, E EI](g Guard[C], shuffle bool, ch ...*Node[C, E]) *Node
 	return &Node[C, E]{
 		Type:      t,
 		Children:  ch,
-		Require:   int32(len(ch)),
-		CountMode: MatchSuccess,
+		Require:   1,
+		CountMode: MatchFail,
 		Guard:     g,
+		Revise:    _invert,
 	}
 }
 
@@ -315,7 +318,14 @@ func (n *Node[C, E]) Check() error {
 		if len(n.Children) != 0 {
 			return errWrongChildCount
 		}
-	case TypeSequenceBranch, TypeStochasticBranch, TypeJoinBranch:
+	case TypeSequenceBranch, TypeStochasticBranch:
+		if len(n.Children) == 0 {
+			return errWrongChildCount
+		}
+		if n.Revise == nil {
+			return fmt.Errorf(fmtBadParam, "revise")
+		}
+	case TypeJoinBranch:
 		if len(n.Children) == 0 {
 			return errWrongChildCount
 		}
@@ -369,4 +379,8 @@ func _success(_ TaskStatus) TaskStatus {
 
 func _fail(_ TaskStatus) TaskStatus {
 	return TaskFail
+}
+
+func _direct(x TaskStatus) TaskStatus {
+	return x
 }

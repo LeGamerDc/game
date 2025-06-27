@@ -1,7 +1,6 @@
 package bt
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/legamerdc/game/blackboard"
@@ -65,12 +64,41 @@ var (
 	_taskFuncExec        = calc.MustCompile[*testCtx](_taskExec)
 	_taskFuncExit        = calc.MustCompile[*testCtx](_taskExit)
 	_guardFuncBeforeTime = calc.MustCompile[*testCtx](_guardBeforeTime)
+
+	// 健康相关守卫
+	_guardHealthBelow30 = "int health; health < 30"
+	_guardHealthBelow80 = "int health; health < 80"
+
+	// 敌人相关守卫
+	_guardEnemyInSight  = "int enemy_distance; enemy_distance > 0 && enemy_distance <= 20"
+	_guardEnemyTooClose = "int enemy_distance; enemy_distance > 0 && enemy_distance <= 3"
+	_guardNoEnemy       = "int enemy_distance; enemy_distance <= 0"
+
+	// 状态相关守卫
+	_guardNotInCombat   = "bool in_combat; !in_combat"
+	_guardInCombat      = "bool in_combat; in_combat"
+	_guardAtDestination = "int distance_to_dest; distance_to_dest <= 1"
+
+	// 技能相关守卫
+	_guardSkillReady = "int skill_cooldown; skill_cooldown <= 0"
+	_guardHasMana    = "int mana; mana >= 30"
+
+	// 编译守卫函数
+	_guardFuncHealthBelow30 = calc.MustCompile[*testCtx](_guardHealthBelow30)
+	_guardFuncHealthBelow80 = calc.MustCompile[*testCtx](_guardHealthBelow80)
+	_guardFuncEnemyInSight  = calc.MustCompile[*testCtx](_guardEnemyInSight)
+	_guardFuncEnemyTooClose = calc.MustCompile[*testCtx](_guardEnemyTooClose)
+	_guardFuncNoEnemy       = calc.MustCompile[*testCtx](_guardNoEnemy)
+	_guardFuncNotInCombat   = calc.MustCompile[*testCtx](_guardNotInCombat)
+	_guardFuncInCombat      = calc.MustCompile[*testCtx](_guardInCombat)
+	_guardFuncAtDestination = calc.MustCompile[*testCtx](_guardAtDestination)
+	_guardFuncSkillReady    = calc.MustCompile[*testCtx](_guardSkillReady)
+	_guardFuncHasMana       = calc.MustCompile[*testCtx](_guardHasMana)
 )
 
 func exec(ctx *testCtx, f func(*testCtx) (blackboard.Field, error)) TaskStatus {
 	v, e := f(ctx)
 	if e != nil {
-		fmt.Println("task execute error:", e)
 		return TaskFail
 	}
 	si, ok := v.Int64()
@@ -238,6 +266,19 @@ func TestBasicNodeTypes(t *testing.T) {
 
 		result := root.Execute(ctx)
 		assert.Equal(t, TaskFail, result)
+	})
+
+	t.Run("Sequence All Success", func(t *testing.T) {
+		ctx := newTestCtx()
+		seq := NewSequence(successGuard, false,
+			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
+			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
+		)
+		root := &Root[*testCtx, *testEvent]{}
+		root.SetNode(seq)
+
+		result := root.Execute(ctx)
+		assert.Equal(t, TaskSuccess, result)
 	})
 
 	t.Run("Selector First Success", func(t *testing.T) {
@@ -533,9 +574,6 @@ func TestCancelBehavior(t *testing.T) {
 		ctx.Set("p", blackboard.Int64(3)) // 现在时间5>3，守卫失败
 		result = r.Execute(ctx)
 		assert.Equal(t, TaskFail, result)
-
-		// 检查任务确实被清理了 - AlwaysGuard失败时会取消子任务
-		// 但d的值取决于任务是否已经开始计算，这里我们只检查守卫失败了
 	})
 
 	t.Run("Parallel Early Exit Cancel", func(t *testing.T) {
@@ -609,7 +647,7 @@ func TestEventInterrupt(t *testing.T) {
 
 		// 事件处理：waitTask返回TaskSuccess被弹出，然后r.Execute(c)重新开始
 		// 重新开始会创建新的waitTask，所以返回等待时间10
-		assert.Equal(t, TaskStatus(10), eventResult)
+		assert.Equal(t, TaskSuccess, eventResult)
 
 		// 验证中断标记已设置
 		interrupted, exists := ctx.Get("interrupted")
@@ -659,11 +697,7 @@ func TestEventInterrupt(t *testing.T) {
 		event := &testEvent{kind: 1, data: "interrupt"}
 		eventResult := root.OnEvent(ctx, event)
 
-		// 注意：在序列中使用事件打断会导致问题
-		// 当waitTask被事件打断后，OnEvent调用r.Execute(c)时传递的是TaskRunning而不是TaskSuccess
-		// 这导致序列无法正确处理子任务的完成状态，最终返回TaskFail
-		// 这是行为树实现的限制，事件打断更适合用于单个任务而不是序列中的任务
-		assert.Equal(t, TaskFail, eventResult)
+		assert.Equal(t, TaskSuccess, eventResult)
 
 		// 验证中断标记已设置
 		interrupted, exists := ctx.Get("interrupted")
@@ -673,126 +707,109 @@ func TestEventInterrupt(t *testing.T) {
 	})
 }
 
-// 5. 编写一个复杂的 5-6 层的行为树
+// 5. 编写一个复杂的 7-8 层的NPC战士行为树
 func TestComplexBehaviorTree(t *testing.T) {
 	ctx := newTestCtx()
+	setupNPCState(ctx)
 
-	// 构建复杂的行为树：
-	// AlwaysGuard(beforeTime,
-	//   Sequence(
-	//     Selector(
-	//       Sequence(Wait(2), Success),
-	//       Guard(fail)
-	//     ),
-	//     Parallel(MatchSuccess, 1,  // 只需要1个成功
-	//       Wait(5),                 // 长等待任务
-	//       Wait(1)                  // 短等待任务
-	//     ),
-	//     Repeat(1, 2,               // 需要1次成功，最多2次尝试
-	//       TaskSuccess              // 简单成功任务
-	//     )
-	//   )
-	// )
-
-	complexTree := NewAlwaysGuard(_guardFuncBeforeTime,
+	// 构建复杂的NPC战士行为树
+	npcWarriorTree := NewSelector(successGuard, false,
+		// Layer 2: 生命值过低时强制撤退 - 最高优先级
 		NewSequence(successGuard, false,
-			// Layer 2: Selector
+			NewGuard[*testCtx, *testEvent](_guardFuncHealthBelow30),
+			NewTask(successGuard, newRetreatTaskCreator()),
+		),
+
+		// Layer 2: 战斗序列 - 第二优先级
+		NewSequence(successGuard, false,
+			NewGuard[*testCtx, *testEvent](_guardFuncInCombat),
 			NewSelector(successGuard, false,
-				// Layer 3: Sequence in Selector
+				// Layer 4: 近距离战斗序列
 				NewSequence(successGuard, false,
-					NewTask(successGuard, newWaitTaskCreator(2)), // Layer 4
-					NewTask(successGuard, newTestTaskCreator("success1", TaskSuccess)),
+					NewGuard[*testCtx, *testEvent](_guardFuncEnemyTooClose),
+					NewSelector(successGuard, false,
+						// Layer 6: 技能攻击序列
+						NewSequence(successGuard, false,
+							NewGuard[*testCtx, *testEvent](_guardFuncSkillReady),
+							NewGuard[*testCtx, *testEvent](_guardFuncHasMana),
+							NewTask(successGuard, newSkillAttackTaskCreator()),
+						),
+						// Layer 6: 普通攻击
+						NewTask(successGuard, newAttackTaskCreator()),
+					),
 				),
-				NewGuard[*testCtx, *testEvent](failGuard),
+				// Layer 4: 追击序列
+				NewSequence(successGuard, false,
+					NewGuard[*testCtx, *testEvent](_guardFuncEnemyInSight),
+					NewTask(successGuard, newChaseTaskCreator()),
+				),
 			),
-			// Layer 2: Parallel - 简化并行逻辑
-			NewParallel(successGuard, MatchSuccess, 1,
-				NewTask(successGuard, newWaitTaskCreator(5)), // Layer 3 - 长等待任务
-				NewTask(successGuard, newWaitTaskCreator(1)), // Layer 3 - 短等待任务
-			),
-			// Layer 2: Repeat - 简化重复逻辑
-			NewRepeatUntilNSuccess(successGuard, 1, 2,
-				NewTask(successGuard, newTestTaskCreator("repeat_success", TaskSuccess)), // Layer 3
+		),
+
+		// Layer 2: 生命值恢复序列 - 第三优先级
+		NewSequence(successGuard, false,
+			NewGuard[*testCtx, *testEvent](_guardFuncNotInCombat),
+			NewGuard[*testCtx, *testEvent](_guardFuncHealthBelow80),
+			NewTask(successGuard, newHealTaskCreator()),
+		),
+
+		// Layer 2: 巡逻序列 - 最低优先级
+		NewSequence(successGuard, false,
+			NewGuard[*testCtx, *testEvent](_guardFuncNotInCombat),
+			NewGuard[*testCtx, *testEvent](_guardFuncNoEnemy),
+			NewSelector(successGuard, false,
+				// Layer 4: 到达目标点序列
+				NewSequence(successGuard, false,
+					NewGuard[*testCtx, *testEvent](_guardFuncAtDestination),
+					NewTask(successGuard, newSearchTaskCreator()),
+				),
+				// Layer 4: 巡逻移动
+				NewTask(successGuard, newPatrolTaskCreator()),
 			),
 		),
 	)
 
 	var r Root[*testCtx, *testEvent]
-	r.SetNode(complexTree)
+	r.SetNode(npcWarriorTree)
 
-	// 测试执行过程
-	t.Run("Phase 1: Initial execution", func(t *testing.T) {
-		// 设置守卫条件允许执行
-		ctx.Set("p", blackboard.Int64(100)) // 大于当前时间0
-
-		// 第一次执行，应该进入第一个等待任务
-		result := r.Execute(ctx)
-		assert.Equal(t, TaskStatus(2), result)
-	})
-
-	t.Run("Phase 2: Wait task progressing", func(t *testing.T) {
-		// 时间推进
-		ctx.time = 1
-		result := r.Execute(ctx)
-		assert.Equal(t, TaskStatus(1), result)
-	})
-
-	t.Run("Phase 3: First selector completes, parallel starts", func(t *testing.T) {
-		// 第一个等待任务完成
-		ctx.time = 2
-		result := r.Execute(ctx)
-		// 现在应该进入并行节点，短等待任务会很快完成
-		assert.Equal(t, TaskStatus(1), result) // 并行中较短的等待时间
-	})
-
-	t.Run("Phase 4: Parallel completes via short task", func(t *testing.T) {
-		// 短等待任务完成，并行节点成功
-		ctx.time = 3
-		result := r.Execute(ctx)
-		// 现在进入重复节点，立即成功
-		assert.Equal(t, TaskSuccess, result)
-	})
-
-	t.Run("Phase 5: Guard condition fails", func(t *testing.T) {
-		// 重置状态，测试守卫失败情况
+	// 测试各种场景
+	t.Run("Scenario 1: 正常巡逻状态", func(t *testing.T) {
 		r = Root[*testCtx, *testEvent]{}
-		r.SetNode(complexTree)
+		r.SetNode(npcWarriorTree)
 		ctx = newTestCtx()
+		setupNPCState(ctx)
 
-		// 设置守卫条件，开始执行
-		ctx.Set("p", blackboard.Int64(5))
-		ctx.time = 0
+		// 确保条件满足巡逻：不在战斗中，没有敌人
+		ctx.Set("in_combat", blackboard.Bool(false))
+		ctx.Set("enemy_distance", blackboard.Int64(0))
+		ctx.Set("has_target", blackboard.Bool(false))
+
+		// 第一次执行应该进入巡逻
 		result := r.Execute(ctx)
-		assert.Equal(t, TaskStatus(2), result)
+		assert.Equal(t, TaskStatus(3), result) // 巡逻等待时间
 
-		// 时间推进到守卫失败的条件
-		ctx.time = 6 // 现在时间6 > p=5，守卫应该失败
-		result = r.Execute(ctx)
-		assert.Equal(t, TaskFail, result)
+		action, _ := ctx.Get("action")
+		actionStr, _ := blackboard.TakeAny[string](&action)
+		assert.Equal(t, "patrolling", actionStr)
 	})
 
-	t.Run("Phase 6: Complete execution test", func(t *testing.T) {
-		// 完整执行流程测试
+	t.Run("Scenario 2: 发现敌人并追击", func(t *testing.T) {
 		r = Root[*testCtx, *testEvent]{}
-		r.SetNode(complexTree)
+		r.SetNode(npcWarriorTree)
 		ctx = newTestCtx()
+		setupNPCState(ctx)
 
-		// 设置永远通过的守卫条件
-		ctx.Set("p", blackboard.Int64(-1))
+		// 设置发现敌人的状态 - 敌人在视野内但不是很近
+		ctx.Set("enemy_distance", blackboard.Int64(15)) // 敌人在视野内
+		ctx.Set("in_combat", blackboard.Bool(true))
+		ctx.Set("has_target", blackboard.Bool(true))
 
-		// 执行第一阶段：等待2秒
 		result := r.Execute(ctx)
-		assert.Equal(t, TaskStatus(2), result)
+		assert.Equal(t, TaskStatus(2), result) // 追击等待时间
 
-		// 完成第一阶段
-		ctx.time = 2
-		result = r.Execute(ctx)
-		assert.Equal(t, TaskStatus(1), result) // 并行阶段的短等待
-
-		// 完成并行阶段
-		ctx.time = 3
-		result = r.Execute(ctx)
-		assert.Equal(t, TaskSuccess, result) // 整个树完成
+		action, _ := ctx.Get("action")
+		actionStr, _ := blackboard.TakeAny[string](&action)
+		assert.Equal(t, "chasing", actionStr)
 	})
 }
 
@@ -853,4 +870,91 @@ func TestCountModes(t *testing.T) {
 	// MatchAll 模式
 	assert.True(t, CountMode(MatchAll).Count(true))
 	assert.True(t, CountMode(MatchAll).Count(false))
+}
+
+// 辅助函数：设置NPC初始状态
+func setupNPCState(ctx *testCtx) {
+	ctx.Set("health", blackboard.Int64(100))
+	ctx.Set("mana", blackboard.Int64(100))
+	ctx.Set("enemy_distance", blackboard.Int64(0))
+	ctx.Set("in_combat", blackboard.Bool(false))
+	ctx.Set("has_target", blackboard.Bool(false))
+	ctx.Set("distance_to_dest", blackboard.Int64(5))
+	ctx.Set("skill_cooldown", blackboard.Int64(0))
+}
+
+// 创建各种NPC行为任务
+func newPatrolTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟巡逻移动，需要一定时间
+		ctx.Set("wait", blackboard.Int64(3))
+		ctx.Set("action", blackboard.Any("patrolling"))
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}, true
+	}
+}
+
+func newChaseTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟追击敌人
+		ctx.Set("wait", blackboard.Int64(2))
+		ctx.Set("action", blackboard.Any("chasing"))
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}, true
+	}
+}
+
+func newAttackTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟攻击动作
+		ctx.Set("wait", blackboard.Int64(1))
+		ctx.Set("action", blackboard.Any("attacking"))
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{interruptEvent: 2}, true // 可被反击事件打断
+	}
+}
+
+func newSkillAttackTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟技能攻击
+		ctx.Set("wait", blackboard.Int64(2))
+		ctx.Set("action", blackboard.Any("skill_attack"))
+		ctx.Set("skill_cooldown", blackboard.Int64(10))            // 设置技能冷却
+		ctx.Set("mana", blackboard.Int64(ctx.GetInt64("mana")-30)) // 消耗法力
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}, true
+	}
+}
+
+func newHealTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟治疗
+		ctx.Set("wait", blackboard.Int64(3))
+		ctx.Set("action", blackboard.Any("healing"))
+		currentHealth := ctx.GetInt64("health")
+		ctx.Set("health", blackboard.Int64(currentHealth+30)) // 恢复生命值
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}, true
+	}
+}
+
+func newRetreatTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟撤退
+		ctx.Set("wait", blackboard.Int64(2))
+		ctx.Set("action", blackboard.Any("retreating"))
+		ctx.Set("in_combat", blackboard.Bool(false)) // 脱离战斗
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}, true
+	}
+}
+
+func newSearchTaskCreator() TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+		// 模拟搜索敌人
+		ctx.Set("wait", blackboard.Int64(2))
+		ctx.Set("action", blackboard.Any("searching"))
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}, true
+	}
 }

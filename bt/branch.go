@@ -32,10 +32,10 @@ func (x *sequenceBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) T
 		x.count++
 	}
 	if x.n.Require > 0 && x.count >= x.n.Require {
-		return TaskSuccess
+		return x.n.Revise(TaskSuccess)
 	}
 	if int(x.idx) >= len(x.n.Children) {
-		return TaskFail
+		return x.n.Revise(TaskFail)
 	}
 	push(stk, x.n.Children[x.idx].Generate(c))
 	return TaskNew
@@ -73,10 +73,10 @@ func (x *stochasticBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus)
 		x.count++
 	}
 	if x.n.Require > 0 && x.count >= x.n.Require {
-		return TaskSuccess
+		return x.n.Revise(TaskSuccess)
 	}
 	if int(x.idx) >= len(x.n.Children) {
-		return TaskFail
+		return x.n.Revise(TaskFail)
 	}
 	push(stk, x.n.Children[x.order[x.idx]].Generate(c))
 	return TaskNew

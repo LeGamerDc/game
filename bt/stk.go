@@ -19,25 +19,32 @@ func (r *Root[C, E]) Execute(c C) (next TaskStatus) {
 		next = TaskNew
 		push(&r.stk, r.n.Generate(c))
 	}
+	return r.execute(c, next)
+}
+
+func (r *Root[C, E]) execute(c C, next TaskStatus) TaskStatus {
 	for v := top(&r.stk); v != nil; v = top(&r.stk) {
 		next = v.Execute(c, &r.stk, next)
 		switch {
 		case next >= TaskRunning:
+			// 叶节点处于 Running 状态，整个栈可以暂停运行了。
 			return next
 		case next == TaskNew:
-			// do nothing
-		default: // success or fail
+			// 节点返回 TaskNew 表示刚刚 push 了一个新的节点到栈顶
+		default:
+			// 节点任务完成，从栈顶弹出，调用 OnComplete 清理资源
 			pop(&r.stk)
 			v.OnComplete(c, false)
 		}
 	}
-	return
+	return next
 }
 
 func (r *Root[C, E]) OnEvent(c C, e E) (next TaskStatus) {
 	if v := top(&r.stk); v != nil {
 		vv, ok := v.(EventTask[C, E])
 		if !ok {
+			// 无法处理事件，返回TaskNew表示事件未处理
 			return TaskNew
 		}
 		if next = vv.OnEvent(c, e); next >= TaskNew {
@@ -48,12 +55,13 @@ func (r *Root[C, E]) OnEvent(c C, e E) (next TaskStatus) {
 		pop(&r.stk)
 		v.OnComplete(c, false)
 
-		return r.Execute(c)
+		return r.execute(c, next)
 	}
 	return TaskNew
 }
 
 func (r *Root[C, E]) Cancel(c C) {
+	// 从栈顶开始（沿着树的路径向上）调用 OnComplete 清理节点
 	for v := top(&r.stk); v != nil; v = top(&r.stk) {
 		pop(&r.stk)
 		v.OnComplete(c, true)
