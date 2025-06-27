@@ -168,15 +168,8 @@ func (n *Node) phaseInfectUp(m map[string]exprType) (up exprType, e error) {
 			if (l == exprBool && r == exprFloat) || (l == exprFloat && r == exprBool) {
 				return 0, fmt.Errorf(fmtWrongVarType, n.Token)
 			}
-			target := exprInt
-			if l == exprFloat || r == exprFloat {
-				target = exprFloat
-			}
-			if l == exprBool || r == exprBool {
-				target = exprBool
-			}
-			n.Target = target
-			return target, nil
+			n.Target = exprBool
+			return exprBool, nil
 		case "<", "<=", ">", ">=":
 			up0, e0 := n.Children[0].phaseInfectUp(m)
 			up1, e1 := n.Children[1].phaseInfectUp(m)

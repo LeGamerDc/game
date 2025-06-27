@@ -72,7 +72,7 @@ type (
 		Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus
 		Parent() TaskI[C, E]
 		SetParent(TaskI[C, E])
-		OnComplete(cancel bool)
+		OnComplete(c C, cancel bool)
 	}
 
 	// EventTask 只有叶子节点（包括重建栈的节点）且可能处于TaskRunning状态才需要实现 OnEvent
@@ -88,7 +88,7 @@ type (
 		Execute(c C) TaskStatus
 		// OnComplete 任务执行完毕后会调用OnComplete，用户可以在这里回收资源。
 		// cancel 标记该任务是被取消的还是正常结束的。
-		OnComplete(cancel bool)
+		OnComplete(c C, cancel bool)
 		// OnEvent 事件驱动接口，用于处理外部事件。返回0表示无法处理这个信号，返回s>0的值表示任务仍然Running并预估bt应该在s后再次Update。
 		OnEvent(C, E) TaskStatus
 	}

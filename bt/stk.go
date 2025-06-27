@@ -28,7 +28,7 @@ func (r *Root[C, E]) Execute(c C) (next TaskStatus) {
 			// do nothing
 		default: // success or fail
 			pop(&r.stk)
-			v.OnComplete(false)
+			v.OnComplete(c, false)
 		}
 	}
 	return
@@ -46,17 +46,17 @@ func (r *Root[C, E]) OnEvent(c C, e E) (next TaskStatus) {
 		}
 		// 叶节点处理 event 后完成任务，转为正常执行
 		pop(&r.stk)
-		v.OnComplete(false)
+		v.OnComplete(c, false)
 
 		return r.Execute(c)
 	}
 	return TaskNew
 }
 
-func (r *Root[C, E]) Cancel() {
+func (r *Root[C, E]) Cancel(c C) {
 	for v := top(&r.stk); v != nil; v = top(&r.stk) {
 		pop(&r.stk)
-		v.OnComplete(true)
+		v.OnComplete(c, true)
 	}
 }
 

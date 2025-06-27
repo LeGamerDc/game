@@ -3,16 +3,15 @@
 //line g.y:2
 package calc
 
-import __yyfmt__ "fmt"
-
-//line g.y:2
-
 import (
 	"fmt"
+	__yyfmt__ "fmt"
 	"strconv"
 )
 
 // 语法树节点类型
+//
+//line g.y:2
 type NodeType int
 
 const (

@@ -1,9 +1,12 @@
 package bt
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/legamerdc/game/blackboard"
+	"github.com/legamerdc/game/calc"
+	"github.com/stretchr/testify/assert"
 )
 
 // 测试用的上下文实现
@@ -29,6 +32,19 @@ func (c *testCtx) Del(key string) {
 	delete(c.bb, key)
 }
 
+func (c *testCtx) Exec(f string) (blackboard.Field, bool) {
+	if f == "now" {
+		return blackboard.Int64(c.time), true
+	}
+	return blackboard.Field{}, false
+}
+
+func (c *testCtx) GetInt64(key string) int64 {
+	v, _ := c.Get(key)
+	vv, _ := v.Int64()
+	return vv
+}
+
 // 测试用的事件类型
 type testEvent struct {
 	kind int32
@@ -37,6 +53,58 @@ type testEvent struct {
 
 func (e *testEvent) Kind() int32 {
 	return e.kind
+}
+
+var (
+	_taskEnter       = "int d, wait, now; d = now()+wait"
+	_taskExec        = "int d, now; now() >= d ? -1 : d - now()"
+	_taskExit        = "int d; d = -1"
+	_guardBeforeTime = "int now, p; p<=0?true:(now()<p)"
+
+	_taskFuncEnter       = calc.MustCompile[*testCtx](_taskEnter)
+	_taskFuncExec        = calc.MustCompile[*testCtx](_taskExec)
+	_taskFuncExit        = calc.MustCompile[*testCtx](_taskExit)
+	_guardFuncBeforeTime = calc.MustCompile[*testCtx](_guardBeforeTime)
+)
+
+func exec(ctx *testCtx, f func(*testCtx) (blackboard.Field, error)) TaskStatus {
+	v, e := f(ctx)
+	if e != nil {
+		fmt.Println("task execute error:", e)
+		return TaskFail
+	}
+	si, ok := v.Int64()
+	if !ok {
+		return TaskFail
+	}
+	return TaskStatus(si)
+}
+
+type waitTask struct {
+	done, cancel bool
+}
+
+func (w *waitTask) Execute(c *testCtx) TaskStatus {
+	return exec(c, _taskFuncExec)
+}
+
+func (w *waitTask) OnComplete(c *testCtx, cancel bool) {
+	exec(c, _taskFuncExit)
+	w.cancel = cancel
+	w.done = true
+}
+
+func (w *waitTask) OnEvent(c *testCtx, e *testEvent) TaskStatus {
+	// 不处理事件
+	return TaskNew
+}
+
+func newWaitTaskCreator(wait int64) TaskCreator[*testCtx, *testEvent] {
+	return func(ctx *testCtx) LeafTaskI[*testCtx, *testEvent] {
+		ctx.Set("wait", blackboard.Int64(wait))
+		exec(ctx, _taskFuncEnter)
+		return &waitTask{}
+	}
 }
 
 // 测试用的叶节点任务
@@ -53,7 +121,7 @@ func (t *testTask) Execute(c *testCtx) TaskStatus {
 	return t.result
 }
 
-func (t *testTask) OnComplete(cancel bool) {
+func (t *testTask) OnComplete(c *testCtx, cancel bool) {
 	t.canceled = cancel
 }
 
@@ -378,6 +446,36 @@ func TestRunningTask(t *testing.T) {
 	}
 }
 
+func TestWaitingTask(t *testing.T) {
+	ctx := newTestCtx()
+	n1 := NewTask(alwaysTrue, newWaitTaskCreator(5))
+	var r Root[*testCtx, *testEvent]
+	r.SetNode(n1)
+	assert.Equal(t, TaskStatus(5), r.Execute(ctx))
+	ctx.time = 2
+	assert.Equal(t, TaskStatus(3), r.Execute(ctx))
+	ctx.time = 5
+	assert.Equal(t, TaskSuccess, r.Execute(ctx))
+}
+
+func TestAlwaysGuard(t *testing.T) {
+	ctx := newTestCtx()
+	n1 := NewTask(alwaysTrue, newWaitTaskCreator(5))
+	n2 := NewAlwaysGuard(_guardFuncBeforeTime, n1)
+	var r Root[*testCtx, *testEvent]
+	r.SetNode(n2)
+	ctx.Set("p", blackboard.Int64(-1))
+	assert.Equal(t, TaskStatus(5), r.Execute(ctx))
+	ctx.time = 2
+	assert.Equal(t, TaskStatus(3), r.Execute(ctx))
+	ctx.time = 3
+	ctx.Set("p", blackboard.Int64(3))
+	assert.Equal(t, TaskFail, r.Execute(ctx))
+	ctx.time = 4
+	ctx.Set("p", blackboard.Int64(-1))
+	assert.Equal(t, TaskStatus(5), r.Execute(ctx))
+}
+
 func TestEventHandling(t *testing.T) {
 	ctx := newTestCtx()
 
@@ -439,7 +537,7 @@ func TestCancelOperation(t *testing.T) {
 	}
 
 	// 取消任务
-	root.Cancel()
+	root.Cancel(ctx)
 
 	if !runningTask.canceled {
 		t.Error("task should be canceled")

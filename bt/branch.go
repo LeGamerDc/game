@@ -17,7 +17,7 @@ func (x *sequenceBranch[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *sequenceBranch[C, E]) OnComplete(_ bool) {}
+func (x *sequenceBranch[C, E]) OnComplete(C, bool) {}
 
 func (x *sequenceBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus {
 	if from == TaskNew {
@@ -57,7 +57,7 @@ func (x *stochasticBranch[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *stochasticBranch[C, E]) OnComplete(_ bool) {}
+func (x *stochasticBranch[C, E]) OnComplete(C, bool) {}
 
 func (x *stochasticBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus {
 	if from == TaskNew {
@@ -100,10 +100,10 @@ func (x *joinBranch[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *joinBranch[C, E]) OnComplete(cancel bool) {
+func (x *joinBranch[C, E]) OnComplete(c C, cancel bool) {
 	for i := range x.roots {
 		if x.tasks[i] >= TaskRunning {
-			x.roots[i].Cancel()
+			x.roots[i].Cancel(c)
 		}
 	}
 }

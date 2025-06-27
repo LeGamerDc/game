@@ -36,6 +36,14 @@ const (
 	exprBool
 )
 
+func MustCompile[B Ctx](code string) func(kv B) (blackboard.Field, error) {
+	f, e := Compile[B](code)
+	if e != nil {
+		panic(e)
+	}
+	return f
+}
+
 func Compile[B Ctx](code string) (f func(kv B) (blackboard.Field, error), e error) {
 	var (
 		n *Node

@@ -18,7 +18,7 @@ func (x *revise[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *revise[C, E]) OnComplete(_ bool) {}
+func (x *revise[C, E]) OnComplete(C, bool) {}
 
 func (x *revise[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus {
 	if from == TaskNew {
@@ -46,7 +46,7 @@ func (x *repeat[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *repeat[C, E]) OnComplete(_ bool) {}
+func (x *repeat[C, E]) OnComplete(C, bool) {}
 
 func (x *repeat[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus {
 	if from == TaskNew {
@@ -84,7 +84,7 @@ func (x *postGuard[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *postGuard[C, E]) OnComplete(_ bool) {}
+func (x *postGuard[C, E]) OnComplete(C, bool) {}
 
 func (x *postGuard[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskStatus {
 	if from == TaskNew {
@@ -113,9 +113,9 @@ func (x *alwaysGuard[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *alwaysGuard[C, E]) OnComplete(cancel bool) {
+func (x *alwaysGuard[C, E]) OnComplete(c C, cancel bool) {
 	if cancel {
-		x.r.Cancel()
+		x.r.Cancel(c)
 	}
 }
 
@@ -143,7 +143,7 @@ func (x *guard[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *guard[C, E]) OnComplete(_ bool) {}
+func (x *guard[C, E]) OnComplete(C, bool) {}
 
 func (x *guard[C, E]) Execute(c C, _ *TaskI[C, E], _ TaskStatus) TaskStatus {
 	return checkGuard(x.n, c)
@@ -164,9 +164,9 @@ func (x *task[C, E]) Parent() TaskI[C, E] {
 	return x.parent
 }
 
-func (x *task[C, E]) OnComplete(cancel bool) {
+func (x *task[C, E]) OnComplete(c C, cancel bool) {
 	if x.tt != nil {
-		x.tt.OnComplete(cancel)
+		x.tt.OnComplete(c, cancel)
 	}
 }
 
