@@ -93,7 +93,7 @@ type (
 		OnEvent(C, E) TaskStatus
 	}
 
-	TaskCreator[C Ctx, E EI] func(C) LeafTaskI[C, E]
+	TaskCreator[C Ctx, E EI] func(C) (LeafTaskI[C, E], bool)
 
 	Guard[C Ctx] func(C) (blackboard.Field, error)
 

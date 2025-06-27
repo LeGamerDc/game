@@ -179,7 +179,10 @@ func (x *task[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskStatus {
 		if s := checkGuard(x.n, c); s != TaskSuccess {
 			return s
 		}
-		x.tt = x.n.Task(c)
+		var ok bool
+		if x.tt, ok = x.n.Task(c); !ok {
+			return TaskFail
+		}
 	}
 	return x.tt.Execute(c)
 }
