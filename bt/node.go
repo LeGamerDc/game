@@ -98,7 +98,7 @@ type (
 	TaskCreator[C Ctx, E EI] func(C) (LeafTaskI[C, E], bool)
 
 	// Guard 节点前置检查，如果检查失败节点不会执行，而是直接返回失败，如果检查报错也当做检查失败。
-	Guard[C Ctx] func(C) (blackboard.Field, error)
+	Guard[C Ctx] func(C) bool
 
 	Node[C Ctx, E EI] struct {
 		Type      NodeType

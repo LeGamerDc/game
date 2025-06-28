@@ -88,13 +88,8 @@ func checkGuard[C Ctx, E EI](n *Node[C, E], c C) TaskStatus {
 	if n.Guard == nil {
 		return TaskSuccess
 	}
-	v, e := n.Guard(c)
-	if e != nil {
-		// TODO Log
-		return TaskFail
+	if n.Guard(c) {
+		return TaskSuccess
 	}
-	if vv, found := v.Bool(); !(found && vv) {
-		return TaskFail
-	}
-	return TaskSuccess
+	return TaskFail
 }

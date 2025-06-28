@@ -1,6 +1,7 @@
 package bt
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/legamerdc/game/blackboard"
@@ -60,10 +61,10 @@ var (
 	_taskExit        = "int d; d = -1"
 	_guardBeforeTime = "int now, p; p<=0?true:(now()<p)"
 
-	_taskFuncEnter       = calc.MustCompile[*testCtx](_taskEnter)
-	_taskFuncExec        = calc.MustCompile[*testCtx](_taskExec)
-	_taskFuncExit        = calc.MustCompile[*testCtx](_taskExit)
-	_guardFuncBeforeTime = calc.MustCompile[*testCtx](_guardBeforeTime)
+	_taskFuncEnter       = exec(calc.MustCompile[*testCtx](_taskEnter))
+	_taskFuncExec        = execTask(calc.MustCompile[*testCtx](_taskExec))
+	_taskFuncExit        = exec(calc.MustCompile[*testCtx](_taskExit))
+	_guardFuncBeforeTime = execBool(calc.MustCompile[*testCtx](_guardBeforeTime))
 
 	// 健康相关守卫
 	_guardHealthBelow30 = "int health; health < 30"
@@ -84,28 +85,52 @@ var (
 	_guardHasMana    = "int mana; mana >= 30"
 
 	// 编译守卫函数
-	_guardFuncHealthBelow30 = calc.MustCompile[*testCtx](_guardHealthBelow30)
-	_guardFuncHealthBelow80 = calc.MustCompile[*testCtx](_guardHealthBelow80)
-	_guardFuncEnemyInSight  = calc.MustCompile[*testCtx](_guardEnemyInSight)
-	_guardFuncEnemyTooClose = calc.MustCompile[*testCtx](_guardEnemyTooClose)
-	_guardFuncNoEnemy       = calc.MustCompile[*testCtx](_guardNoEnemy)
-	_guardFuncNotInCombat   = calc.MustCompile[*testCtx](_guardNotInCombat)
-	_guardFuncInCombat      = calc.MustCompile[*testCtx](_guardInCombat)
-	_guardFuncAtDestination = calc.MustCompile[*testCtx](_guardAtDestination)
-	_guardFuncSkillReady    = calc.MustCompile[*testCtx](_guardSkillReady)
-	_guardFuncHasMana       = calc.MustCompile[*testCtx](_guardHasMana)
+	_guardFuncHealthBelow30 = execBool(calc.MustCompile[*testCtx](_guardHealthBelow30))
+	_guardFuncHealthBelow80 = execBool(calc.MustCompile[*testCtx](_guardHealthBelow80))
+	_guardFuncEnemyInSight  = execBool(calc.MustCompile[*testCtx](_guardEnemyInSight))
+	_guardFuncEnemyTooClose = execBool(calc.MustCompile[*testCtx](_guardEnemyTooClose))
+	_guardFuncNoEnemy       = execBool(calc.MustCompile[*testCtx](_guardNoEnemy))
+	_guardFuncNotInCombat   = execBool(calc.MustCompile[*testCtx](_guardNotInCombat))
+	_guardFuncInCombat      = execBool(calc.MustCompile[*testCtx](_guardInCombat))
+	_guardFuncAtDestination = execBool(calc.MustCompile[*testCtx](_guardAtDestination))
+	_guardFuncSkillReady    = execBool(calc.MustCompile[*testCtx](_guardSkillReady))
+	_guardFuncHasMana       = execBool(calc.MustCompile[*testCtx](_guardHasMana))
 )
 
-func exec(ctx *testCtx, f func(*testCtx) (blackboard.Field, error)) TaskStatus {
-	v, e := f(ctx)
-	if e != nil {
-		return TaskFail
+func execBool(f func(*testCtx) (blackboard.Field, error)) func(*testCtx) bool {
+	return func(ctx *testCtx) bool {
+		v, e := f(ctx)
+		if e != nil {
+			fmt.Println("execBool error", e)
+			return false
+		}
+		si, ok := v.Bool()
+		return si && ok
 	}
-	si, ok := v.Int64()
-	if !ok {
-		return TaskFail
+}
+
+func execTask(f func(*testCtx) (blackboard.Field, error)) func(*testCtx) TaskStatus {
+	return func(ctx *testCtx) TaskStatus {
+		v, e := f(ctx)
+		if e != nil {
+			fmt.Println("execTask error", e)
+			return TaskFail
+		}
+		si, ok := v.Int64()
+		if !ok {
+			return TaskFail
+		}
+		return TaskStatus(si)
 	}
-	return TaskStatus(si)
+}
+
+func exec(f func(*testCtx) (blackboard.Field, error)) func(*testCtx) {
+	return func(ctx *testCtx) {
+		_, e := f(ctx)
+		if e != nil {
+			fmt.Println("exec error", e)
+		}
+	}
 }
 
 // waitTask 支持等待的任务
@@ -115,11 +140,11 @@ type waitTask struct {
 }
 
 func (w *waitTask) Execute(c *testCtx) TaskStatus {
-	return exec(c, _taskFuncExec)
+	return _taskFuncExec(c)
 }
 
 func (w *waitTask) OnComplete(c *testCtx, cancel bool) {
-	exec(c, _taskFuncExit)
+	_taskFuncExit(c)
 	w.cancel = cancel
 	w.done = true
 }
@@ -136,7 +161,7 @@ func (w *waitTask) OnEvent(c *testCtx, e *testEvent) TaskStatus {
 func newWaitTaskCreator(wait int64) TaskCreator[*testCtx, *testEvent] {
 	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
 		ctx.Set("wait", blackboard.Int64(wait))
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
@@ -144,7 +169,7 @@ func newWaitTaskCreator(wait int64) TaskCreator[*testCtx, *testEvent] {
 func newInterruptibleWaitTaskCreator(wait int64, interruptEvent int32) TaskCreator[*testCtx, *testEvent] {
 	return func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
 		ctx.Set("wait", blackboard.Int64(wait))
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{interruptEvent: interruptEvent}, true
 	}
 }
@@ -190,12 +215,12 @@ func newTestCtx() *testCtx {
 	}
 }
 
-func successGuard(c *testCtx) (blackboard.Field, error) {
-	return blackboard.Bool(true), nil
+func successGuard(c *testCtx) bool {
+	return true
 }
 
-func failGuard(c *testCtx) (blackboard.Field, error) {
-	return blackboard.Bool(false), nil
+func failGuard(c *testCtx) bool {
+	return false
 }
 
 // 1. 各种 node 类型的Execute测试
@@ -553,7 +578,7 @@ func TestCancelBehavior(t *testing.T) {
 		waitTaskCreator := func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
 			ctx.Set("wait", blackboard.Int64(10))
 			ctx.Set("task_started", blackboard.Bool(true))
-			exec(ctx, _taskFuncEnter)
+			_taskFuncEnter(ctx)
 			return &waitTask{}, true
 		}
 
@@ -589,13 +614,13 @@ func TestCancelBehavior(t *testing.T) {
 
 		task2Creator := func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
 			ctx.Set("wait", blackboard.Int64(10))
-			exec(ctx, _taskFuncEnter)
+			_taskFuncEnter(ctx)
 			return &waitTask{}, true
 		}
 
 		task3Creator := func(ctx *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
 			ctx.Set("wait", blackboard.Int64(15))
-			exec(ctx, _taskFuncEnter)
+			_taskFuncEnter(ctx)
 			return &waitTask{}, true
 		}
 
@@ -889,7 +914,7 @@ func newPatrolTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		// 模拟巡逻移动，需要一定时间
 		ctx.Set("wait", blackboard.Int64(3))
 		ctx.Set("action", blackboard.Any("patrolling"))
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
@@ -899,7 +924,7 @@ func newChaseTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		// 模拟追击敌人
 		ctx.Set("wait", blackboard.Int64(2))
 		ctx.Set("action", blackboard.Any("chasing"))
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
@@ -909,7 +934,7 @@ func newAttackTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		// 模拟攻击动作
 		ctx.Set("wait", blackboard.Int64(1))
 		ctx.Set("action", blackboard.Any("attacking"))
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{interruptEvent: 2}, true // 可被反击事件打断
 	}
 }
@@ -921,7 +946,7 @@ func newSkillAttackTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		ctx.Set("action", blackboard.Any("skill_attack"))
 		ctx.Set("skill_cooldown", blackboard.Int64(10))            // 设置技能冷却
 		ctx.Set("mana", blackboard.Int64(ctx.GetInt64("mana")-30)) // 消耗法力
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
@@ -933,7 +958,7 @@ func newHealTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		ctx.Set("action", blackboard.Any("healing"))
 		currentHealth := ctx.GetInt64("health")
 		ctx.Set("health", blackboard.Int64(currentHealth+30)) // 恢复生命值
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
@@ -944,7 +969,7 @@ func newRetreatTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		ctx.Set("wait", blackboard.Int64(2))
 		ctx.Set("action", blackboard.Any("retreating"))
 		ctx.Set("in_combat", blackboard.Bool(false)) // 脱离战斗
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
@@ -954,7 +979,7 @@ func newSearchTaskCreator() TaskCreator[*testCtx, *testEvent] {
 		// 模拟搜索敌人
 		ctx.Set("wait", blackboard.Int64(2))
 		ctx.Set("action", blackboard.Any("searching"))
-		exec(ctx, _taskFuncEnter)
+		_taskFuncEnter(ctx)
 		return &waitTask{}, true
 	}
 }
