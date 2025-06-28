@@ -3,8 +3,6 @@ package bt
 import (
 	"errors"
 	"fmt"
-
-	"github.com/legamerdc/game/blackboard"
 )
 
 type (
@@ -21,9 +19,6 @@ type (
 
 	Ctx interface {
 		Now() int64
-		Get(string) (blackboard.Field, bool)
-		Set(string, blackboard.Field)
-		Del(string)
 	}
 )
 
