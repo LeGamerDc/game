@@ -1,4 +1,4 @@
-package ds
+package lib
 
 type IndexMap[K comparable, V any] struct {
 	index map[K]int32

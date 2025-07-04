@@ -1,13 +1,12 @@
-package calc
+package cc
 
 import (
 	"errors"
 	"fmt"
+	"github.com/legamerdc/game/lib"
 	"math"
 	"strconv"
 	"strings"
-
-	"github.com/legamerdc/game/blackboard"
 )
 
 var (
@@ -22,10 +21,10 @@ type (
 	exprType int32
 
 	Ctx interface {
-		Get(string) (blackboard.Field, bool)
-		Set(string, blackboard.Field)
+		Get(string) (lib.Field, bool)
+		Set(string, lib.Field)
 		Del(string)
-		Exec(string) (blackboard.Field, bool)
+		Exec(string) (lib.Field, bool)
 	}
 )
 
@@ -36,7 +35,7 @@ const (
 	exprBool
 )
 
-func MustCompile[B Ctx](code string) func(kv B) (blackboard.Field, error) {
+func MustCompile[B Ctx](code string) func(kv B) (lib.Field, error) {
 	f, e := Compile[B](code)
 	if e != nil {
 		panic(e)
@@ -44,7 +43,7 @@ func MustCompile[B Ctx](code string) func(kv B) (blackboard.Field, error) {
 	return f
 }
 
-func Compile[B Ctx](code string) (f func(kv B) (blackboard.Field, error), e error) {
+func Compile[B Ctx](code string) (f func(kv B) (lib.Field, error), e error) {
 	var (
 		n *Node
 		m map[string]exprType
@@ -69,10 +68,10 @@ func Compile[B Ctx](code string) (f func(kv B) (blackboard.Field, error), e erro
 	return compile[B](n, m)
 }
 
-func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field, error), e error) {
+func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (lib.Field, error), e error) {
 	switch n.Type {
 	case NodeProgram:
-		fs := make([]func(B) (blackboard.Field, error), 0, len(n.Children)+1)
+		fs := make([]func(B) (lib.Field, error), 0, len(n.Children)+1)
 		for _, x := range n.Children {
 			if x.Type != NodeVarDecl {
 				if f, e = compile[B](x, m); e != nil {
@@ -82,11 +81,11 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field
 			}
 		}
 		if tmpKeys := _tmpKeys(m); len(tmpKeys) > 0 {
-			return _after(_inline(fs), func(b B) (blackboard.Field, error) {
+			return _after(_inline(fs), func(b B) (lib.Field, error) {
 				for _, k := range tmpKeys {
 					b.Del(k)
 				}
-				return blackboard.Field{}, nil
+				return lib.Field{}, nil
 			}), nil
 		}
 		return _inline(fs), nil
@@ -111,38 +110,38 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (blackboard.Field
 	panic("unreachable")
 }
 
-func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (blackboard.Field, error), e error) {
-	var f func(B) (blackboard.Field, error)
+func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field, error), e error) {
+	var f func(B) (lib.Field, error)
 	if f, e = compile[B](n.Children[0], m); e != nil {
 		return nil, e
 	}
 	token := n.Token
 	switch n.Target {
 	case exprInt:
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			if v, e = f(b); e != nil {
 				return
 			}
 			vv, _ := v.Int64()
-			b.Set(token, blackboard.Int64(vv))
+			b.Set(token, lib.Int64(vv))
 			return v, nil
 		}, nil
 	case exprFloat:
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			if v, e = f(b); e != nil {
 				return
 			}
 			vv, _ := v.Float64()
-			b.Set(token, blackboard.Float64(vv))
+			b.Set(token, lib.Float64(vv))
 			return v, nil
 		}, nil
 	case exprBool:
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			if v, e = f(b); e != nil {
 				return
 			}
 			vv, _ := v.Bool()
-			b.Set(token, blackboard.Bool(vv))
+			b.Set(token, lib.Bool(vv))
 			return v, nil
 		}, nil
 	default:
@@ -150,8 +149,8 @@ func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (blackboar
 	}
 }
 
-func compileUnary[B Ctx](n *Node, m map[string]exprType) (fr func(B) (blackboard.Field, error), e error) {
-	var f func(B) (blackboard.Field, error)
+func compileUnary[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field, error), e error) {
+	var f func(B) (lib.Field, error)
 	if f, e = compile[B](n.Children[0], m); e != nil {
 		return nil, e
 	}
@@ -160,35 +159,35 @@ func compileUnary[B Ctx](n *Node, m map[string]exprType) (fr func(B) (blackboard
 		return f, nil
 	case "-":
 		if n.Target == exprFloat {
-			return func(b B) (v blackboard.Field, e error) {
+			return func(b B) (v lib.Field, e error) {
 				if v, e = f(b); e != nil {
 					return
 				}
 				vv, _ := v.Float64()
-				return blackboard.Float64(-vv), nil
+				return lib.Float64(-vv), nil
 			}, nil
 		}
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			if v, e = f(b); e != nil {
 				return
 			}
 			vv, _ := v.Int64()
-			return blackboard.Int64(-vv), nil
+			return lib.Int64(-vv), nil
 		}, nil
 	case "!":
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			if v, e = f(b); e != nil {
 				return
 			}
 			vv, _ := v.Bool()
-			return blackboard.Bool(!vv), nil
+			return lib.Bool(!vv), nil
 		}, nil
 	default:
 		panic("unreachable")
 	}
 }
 
-func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, error), error) {
 	f0, e0 := compile[B](n.Children[0], m)
 	f1, e1 := compile[B](n.Children[1], m)
 	if e := errors.Join(e0, e1); e != nil {
@@ -198,7 +197,7 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 	case "==", "!=":
 		if n.Children[0].Target == exprBool {
 			op := binBool(n.Token)
-			return func(b B) (v blackboard.Field, e error) {
+			return func(b B) (v lib.Field, e error) {
 				v0, e0 := f0(b)
 				v1, e1 := f1(b)
 				if e = errors.Join(e0, e1); e != nil {
@@ -213,7 +212,7 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 	case "^", "+", "-", "*", "/", "%", "<", "<=", ">", ">=":
 		if n.Children[0].Target == exprInt {
 			op := binInt(n.Token)
-			return func(b B) (v blackboard.Field, e error) {
+			return func(b B) (v lib.Field, e error) {
 				v0, e0 := f0(b)
 				v1, e1 := f1(b)
 				if e = errors.Join(e0, e1); e != nil {
@@ -226,7 +225,7 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 		}
 		if n.Children[0].Target == exprFloat {
 			op := binFloat(n.Token)
-			return func(b B) (v blackboard.Field, e error) {
+			return func(b B) (v lib.Field, e error) {
 				v0, e0 := f0(b)
 				v1, e1 := f1(b)
 				if e = errors.Join(e0, e1); e != nil {
@@ -238,7 +237,7 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 			}, nil
 		}
 	case "||":
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			v0, e0 := f0(b)
 			if e0 != nil {
 				return v, e0
@@ -254,7 +253,7 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 			return v1, nil
 		}, nil
 	case "&&":
-		return func(b B) (v blackboard.Field, e error) {
+		return func(b B) (v lib.Field, e error) {
 			v0, e0 := f0(b)
 			if e0 != nil {
 				return v, e0
@@ -274,14 +273,14 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.F
 	panic("unreachable")
 }
 
-func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, error), error) {
 	f0, e0 := compile[B](n.Children[0], m)
 	f1, e1 := compile[B](n.Children[1], m)
 	f2, e2 := compile[B](n.Children[2], m)
 	if e := errors.Join(e0, e1, e2); e != nil {
 		return nil, e
 	}
-	return func(b B) (v blackboard.Field, e error) {
+	return func(b B) (v lib.Field, e error) {
 		v0, e0 := f0(b)
 		if e0 != nil {
 			return v, e0
@@ -293,9 +292,9 @@ func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (blackboard.
 	}, nil
 }
 
-func compileFunc[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileFunc[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	token := n.Token
-	return func(b B) (v blackboard.Field, e error) {
+	return func(b B) (v lib.Field, e error) {
 		v0, ok := b.Exec(token)
 		if !ok {
 			return v, fmt.Errorf(fmtIllFunc, token)
@@ -304,9 +303,9 @@ func compileFunc[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Fie
 	}, nil
 }
 
-func compileIdent[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileIdent[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	token := n.Token
-	return func(b B) (v blackboard.Field, e error) {
+	return func(b B) (v lib.Field, e error) {
 		v0, ok := b.Get(token)
 		if !ok {
 			return v, fmt.Errorf(fmtKeyMiss, token)
@@ -315,153 +314,153 @@ func compileIdent[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Fi
 	}, nil
 }
 
-func compileNumber[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileNumber[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	f, e := strconv.ParseFloat(n.Token, 64)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
 	}
-	var v blackboard.Field
+	var v lib.Field
 	switch n.Target {
 	case exprInt:
-		v = blackboard.Int64(int64(f))
+		v = lib.Int64(int64(f))
 	case exprFloat:
-		v = blackboard.Float64(f)
+		v = lib.Float64(f)
 	case exprBool:
-		v = blackboard.Bool(int64(f) != 0)
+		v = lib.Bool(int64(f) != 0)
 	default:
 		panic("unreachable")
 	}
-	return func(b B) (blackboard.Field, error) {
+	return func(b B) (lib.Field, error) {
 		return v, nil
 	}, nil
 }
 
-func compileBool[B Ctx](n *Node, _ map[string]exprType) (func(B) (blackboard.Field, error), error) {
+func compileBool[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	f, e := strconv.ParseBool(n.Token)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
 	}
-	v := blackboard.Bool(f)
-	return func(b B) (blackboard.Field, error) {
+	v := lib.Bool(f)
+	return func(b B) (lib.Field, error) {
 		return v, nil
 	}, nil
 }
 
-func binInt(op string) func(a, b int64) blackboard.Field {
+func binInt(op string) func(a, b int64) lib.Field {
 	switch op {
 	case "^":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(_ipower(a, b))
+		return func(a, b int64) lib.Field {
+			return lib.Int64(_ipower(a, b))
 		}
 	case "+":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(a + b)
+		return func(a, b int64) lib.Field {
+			return lib.Int64(a + b)
 		}
 	case "-":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(a - b)
+		return func(a, b int64) lib.Field {
+			return lib.Int64(a - b)
 		}
 	case "*":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(a * b)
+		return func(a, b int64) lib.Field {
+			return lib.Int64(a * b)
 		}
 	case "/":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(a / b)
+		return func(a, b int64) lib.Field {
+			return lib.Int64(a / b)
 		}
 	case "%":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Int64(a % b)
+		return func(a, b int64) lib.Field {
+			return lib.Int64(a % b)
 		}
 	case "==":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Bool(a == b)
+		return func(a, b int64) lib.Field {
+			return lib.Bool(a == b)
 		}
 	case "!=":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Bool(a != b)
+		return func(a, b int64) lib.Field {
+			return lib.Bool(a != b)
 		}
 	case "<":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Bool(a < b)
+		return func(a, b int64) lib.Field {
+			return lib.Bool(a < b)
 		}
 	case "<=":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Bool(a <= b)
+		return func(a, b int64) lib.Field {
+			return lib.Bool(a <= b)
 		}
 	case ">":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Bool(a > b)
+		return func(a, b int64) lib.Field {
+			return lib.Bool(a > b)
 		}
 	case ">=":
-		return func(a, b int64) blackboard.Field {
-			return blackboard.Bool(a >= b)
+		return func(a, b int64) lib.Field {
+			return lib.Bool(a >= b)
 		}
 	default:
 		panic("unreachable")
 	}
 }
 
-func binFloat(op string) func(a float64, b float64) blackboard.Field {
+func binFloat(op string) func(a float64, b float64) lib.Field {
 	switch op {
 	case "^":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Float64(math.Pow(a, b))
+		return func(a, b float64) lib.Field {
+			return lib.Float64(math.Pow(a, b))
 		}
 	case "+":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Float64(a + b)
+		return func(a, b float64) lib.Field {
+			return lib.Float64(a + b)
 		}
 	case "-":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Float64(a - b)
+		return func(a, b float64) lib.Field {
+			return lib.Float64(a - b)
 		}
 	case "*":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Float64(a * b)
+		return func(a, b float64) lib.Field {
+			return lib.Float64(a * b)
 		}
 	case "/":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Float64(a / b)
+		return func(a, b float64) lib.Field {
+			return lib.Float64(a / b)
 		}
 	case "==":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Bool(a == b)
+		return func(a, b float64) lib.Field {
+			return lib.Bool(a == b)
 		}
 	case "!=":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Bool(a != b)
+		return func(a, b float64) lib.Field {
+			return lib.Bool(a != b)
 		}
 	case "<":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Bool(a < b)
+		return func(a, b float64) lib.Field {
+			return lib.Bool(a < b)
 		}
 	case "<=":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Bool(a <= b)
+		return func(a, b float64) lib.Field {
+			return lib.Bool(a <= b)
 		}
 	case ">":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Bool(a > b)
+		return func(a, b float64) lib.Field {
+			return lib.Bool(a > b)
 		}
 	case ">=":
-		return func(a, b float64) blackboard.Field {
-			return blackboard.Bool(a >= b)
+		return func(a, b float64) lib.Field {
+			return lib.Bool(a >= b)
 		}
 	default:
 		panic("unreachable")
 	}
 }
 
-func binBool(op string) func(a, b bool) blackboard.Field {
+func binBool(op string) func(a, b bool) lib.Field {
 	switch op {
 	case "==":
-		return func(a, b bool) blackboard.Field {
-			return blackboard.Bool(a == b)
+		return func(a, b bool) lib.Field {
+			return lib.Bool(a == b)
 		}
 	case "!=":
-		return func(a, b bool) blackboard.Field {
-			return blackboard.Bool(a != b)
+		return func(a, b bool) lib.Field {
+			return lib.Bool(a != b)
 		}
 	default:
 		panic("unreachable")
@@ -572,8 +571,8 @@ func _tmpKeys(m map[string]exprType) (keys []string) {
 	return
 }
 
-func _after[B any](f, after func(B) (blackboard.Field, error)) func(B) (blackboard.Field, error) {
-	return func(b B) (v blackboard.Field, e error) {
+func _after[B any](f, after func(B) (lib.Field, error)) func(B) (lib.Field, error) {
+	return func(b B) (v lib.Field, e error) {
 		if v, e = f(b); e != nil {
 			return
 		}

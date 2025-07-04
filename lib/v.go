@@ -1,4 +1,4 @@
-package blackboard
+package lib
 
 import "math"
 

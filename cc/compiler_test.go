@@ -1,10 +1,9 @@
-package calc
+package cc
 
 import (
 	"fmt"
+	"github.com/legamerdc/game/lib"
 	"testing"
-
-	"github.com/legamerdc/game/blackboard"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -60,21 +59,21 @@ func TestParse(t *testing.T) {
 
 // MockKv 实现 Ctx 接口用于测试
 type MockKv struct {
-	data map[string]blackboard.Field
+	data map[string]lib.Field
 }
 
 func NewMockKv() *MockKv {
 	return &MockKv{
-		data: make(map[string]blackboard.Field),
+		data: make(map[string]lib.Field),
 	}
 }
 
-func (m *MockKv) Get(key string) (blackboard.Field, bool) {
+func (m *MockKv) Get(key string) (lib.Field, bool) {
 	v, ok := m.data[key]
 	return v, ok
 }
 
-func (m *MockKv) Set(key string, v blackboard.Field) {
+func (m *MockKv) Set(key string, v lib.Field) {
 	m.data[key] = v
 }
 
@@ -82,12 +81,12 @@ func (m *MockKv) Del(key string) {
 	delete(m.data, key)
 }
 
-func (m *MockKv) Exec(key string) (v blackboard.Field, ok bool) {
+func (m *MockKv) Exec(key string) (v lib.Field, ok bool) {
 	v1, ok1 := m.getInt64("_1")
 	if !ok1 {
 		return
 	}
-	return blackboard.Int64(v1 * v1), true
+	return lib.Int64(v1 * v1), true
 }
 
 func (m *MockKv) getInt64(key string) (int64, bool) {
@@ -100,15 +99,15 @@ func (m *MockKv) getInt64(key string) (int64, bool) {
 }
 
 func (m *MockKv) SetInt64(key string, value int64) {
-	m.data[key] = blackboard.Int64(value)
+	m.data[key] = lib.Int64(value)
 }
 
 func (m *MockKv) SetFloat64(key string, value float64) {
-	m.data[key] = blackboard.Float64(value)
+	m.data[key] = lib.Float64(value)
 }
 
 func (m *MockKv) SetBool(key string, value bool) {
-	m.data[key] = blackboard.Bool(value)
+	m.data[key] = lib.Bool(value)
 }
 
 func TestCompile(t *testing.T) {
