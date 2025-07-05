@@ -3,10 +3,11 @@ package cc
 import (
 	"errors"
 	"fmt"
-	"github.com/legamerdc/game/lib"
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/legamerdc/game/lib"
 )
 
 var (
@@ -23,7 +24,6 @@ type (
 	Ctx interface {
 		Get(string) (lib.Field, bool)
 		Set(string, lib.Field)
-		Del(string)
 		Exec(string) (lib.Field, bool)
 	}
 )
@@ -80,14 +80,6 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (lib.Field, error
 				fs = append(fs, f)
 			}
 		}
-		if tmpKeys := _tmpKeys(m); len(tmpKeys) > 0 {
-			return _after(_inline(fs), func(b B) (lib.Field, error) {
-				for _, k := range tmpKeys {
-					b.Del(k)
-				}
-				return lib.Field{}, nil
-			}), nil
-		}
 		return _inline(fs), nil
 	case NodeAssign:
 		return compileAssign[B](n, m)
@@ -99,6 +91,8 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (lib.Field, error
 		return compileTernary[B](n, m)
 	case NodeIdent:
 		return compileIdent[B](n, m)
+	case NodeTryIdent:
+		return compileTryIdent[B](n, m)
 	case NodeFunc:
 		return compileFunc[B](n, m)
 	case NodeNumber:
@@ -298,6 +292,34 @@ func compileFunc[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, err
 		v0, ok := b.Exec(token)
 		if !ok {
 			return v, fmt.Errorf(fmtIllFunc, token)
+		}
+		return v0, nil
+	}, nil
+}
+
+var (
+	zeroInt   = lib.Int64(0)
+	zeroFloat = lib.Float64(0)
+	zeroBool  = lib.Bool(false)
+)
+
+func compileTryIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, error), error) {
+	token := n.Token
+	var zero lib.Field
+	switch m[token] {
+	case exprInt:
+		zero = zeroInt
+	case exprFloat:
+		zero = zeroFloat
+	case exprBool:
+		zero = zeroBool
+	default:
+		panic("unreachable")
+	}
+	return func(b B) (v lib.Field, e error) {
+		v0, ok := b.Get(token)
+		if !ok {
+			return zero, nil
 		}
 		return v0, nil
 	}, nil

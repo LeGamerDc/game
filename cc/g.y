@@ -1,5 +1,5 @@
 %{
-package calc
+package cc
 
 import (
     "fmt"
@@ -17,6 +17,7 @@ const (
     NodeUnaryOp
     NodeTernary
     NodeIdent
+    NodeTryIdent
     NodeFunc
     NodeNumber
     NodeBool
@@ -53,6 +54,7 @@ type Node struct {
 %token PLUS MINUS MULTIPLY DIVIDE MOD POWER
 %token AND OR NOT
 %token LT LE GT GE EQ NE
+%token DOLLAR
 
 %type <node> program
 %type <node> statement_list
@@ -377,6 +379,13 @@ primary_expr:
             Token: $1,
         }
     }
+|   IDENT DOLLAR
+    {
+        $$ = &Node{
+            Type: NodeTryIdent,
+            Token: $1,
+        }
+    }
 |   IDENT LPAREN RPAREN
     {
         $$ = &Node{
@@ -497,6 +506,9 @@ func (l *SimpleLexer) Lex(lval *yySymType) int {
         case ':':
             l.pos++
             return COLON
+        case '$':
+            l.pos++
+            return DOLLAR
         case '!':
             if l.pos+1 < len(l.input) && l.input[l.pos+1] == '=' {
                 l.pos += 2

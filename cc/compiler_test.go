@@ -2,8 +2,9 @@ package cc
 
 import (
 	"fmt"
-	"github.com/legamerdc/game/lib"
 	"testing"
+
+	"github.com/legamerdc/game/lib"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -335,9 +336,6 @@ func TestCompile(t *testing.T) {
 		vv, ok := v.Int64()
 		assert.True(t, ok)
 		assert.InDelta(t, 9.0, vv, 0.00001)
-
-		_, ok = kv.Get("_1")
-		assert.False(t, ok)
 	})
 
 	// 测试复杂的运算符优先级
