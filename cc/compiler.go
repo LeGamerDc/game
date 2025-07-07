@@ -21,11 +21,13 @@ var (
 type (
 	exprType int32
 
-	Ctx interface {
-		Get(string) (lib.Field, bool)
-		Set(string, lib.Field)
+	Ctx[K any] interface {
+		Get(K) (lib.Field, bool)
+		Set(K, lib.Field)
 		Exec(string) (lib.Field, bool)
 	}
+
+	Key[K any] func(string) K
 )
 
 const (
@@ -35,15 +37,15 @@ const (
 	exprBool
 )
 
-func MustCompile[B Ctx](code string) func(kv B) (lib.Field, error) {
-	f, e := Compile[B](code)
+func MustCompile[K any, B Ctx[K]](code string, key Key[K]) func(kv B) (lib.Field, error) {
+	f, e := Compile[K, B](code, key)
 	if e != nil {
 		panic(e)
 	}
 	return f
 }
 
-func Compile[B Ctx](code string) (f func(kv B) (lib.Field, error), e error) {
+func Compile[K any, B Ctx[K]](code string, key Key[K]) (f func(kv B) (lib.Field, error), e error) {
 	var (
 		n *Node
 		m map[string]exprType
@@ -65,16 +67,16 @@ func Compile[B Ctx](code string) (f func(kv B) (lib.Field, error), e error) {
 	if e = n.phaseInfectDown(m, 0); e != nil {
 		return nil, e
 	}
-	return compile[B](n, m)
+	return compile[K, B](n, m, key)
 }
 
-func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (lib.Field, error), e error) {
+func compile[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (f func(B) (lib.Field, error), e error) {
 	switch n.Type {
 	case NodeProgram:
 		fs := make([]func(B) (lib.Field, error), 0, len(n.Children)+1)
 		for _, x := range n.Children {
 			if x.Type != NodeVarDecl {
-				if f, e = compile[B](x, m); e != nil {
+				if f, e = compile[K, B](x, m, k); e != nil {
 					return nil, e
 				}
 				fs = append(fs, f)
@@ -82,34 +84,35 @@ func compile[B Ctx](n *Node, m map[string]exprType) (f func(B) (lib.Field, error
 		}
 		return _inline(fs), nil
 	case NodeAssign:
-		return compileAssign[B](n, m)
+		return compileAssign[K, B](n, m, k)
 	case NodeUnaryOp:
-		return compileUnary[B](n, m)
+		return compileUnary[K, B](n, m, k)
 	case NodeBinOp:
-		return compileBinary[B](n, m)
+		return compileBinary[K, B](n, m, k)
 	case NodeTernary:
-		return compileTernary[B](n, m)
+		return compileTernary[K, B](n, m, k)
 	case NodeIdent:
-		return compileIdent[B](n, m)
+		return compileIdent[K, B](n, m, k)
 	case NodeTryIdent:
-		return compileTryIdent[B](n, m)
+		return compileTryIdent[K, B](n, m, k)
 	case NodeFunc:
-		return compileFunc[B](n, m)
+		return compileFunc[K, B](n, m)
 	case NodeNumber:
-		return compileNumber[B](n, m)
+		return compileNumber[K, B](n, m)
 	case NodeBool:
-		return compileBool[B](n, m)
+		return compileBool[K, B](n, m)
 	default:
 	}
 	panic("unreachable")
 }
 
-func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field, error), e error) {
+func compileAssign[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (fr func(B) (lib.Field, error), e error) {
 	var f func(B) (lib.Field, error)
-	if f, e = compile[B](n.Children[0], m); e != nil {
+	if f, e = compile[K, B](n.Children[0], m, k); e != nil {
 		return nil, e
 	}
 	token := n.Token
+	key := k(token)
 	switch n.Target {
 	case exprInt:
 		return func(b B) (v lib.Field, e error) {
@@ -117,7 +120,7 @@ func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field
 				return
 			}
 			vv, _ := v.Int64()
-			b.Set(token, lib.Int64(vv))
+			b.Set(key, lib.Int64(vv))
 			return v, nil
 		}, nil
 	case exprFloat:
@@ -126,7 +129,7 @@ func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field
 				return
 			}
 			vv, _ := v.Float64()
-			b.Set(token, lib.Float64(vv))
+			b.Set(key, lib.Float64(vv))
 			return v, nil
 		}, nil
 	case exprBool:
@@ -135,7 +138,7 @@ func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field
 				return
 			}
 			vv, _ := v.Bool()
-			b.Set(token, lib.Bool(vv))
+			b.Set(key, lib.Bool(vv))
 			return v, nil
 		}, nil
 	default:
@@ -143,9 +146,9 @@ func compileAssign[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field
 	}
 }
 
-func compileUnary[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field, error), e error) {
+func compileUnary[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (fr func(B) (lib.Field, error), e error) {
 	var f func(B) (lib.Field, error)
-	if f, e = compile[B](n.Children[0], m); e != nil {
+	if f, e = compile[K, B](n.Children[0], m, k); e != nil {
 		return nil, e
 	}
 	switch n.Token {
@@ -181,9 +184,9 @@ func compileUnary[B Ctx](n *Node, m map[string]exprType) (fr func(B) (lib.Field,
 	}
 }
 
-func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, error), error) {
-	f0, e0 := compile[B](n.Children[0], m)
-	f1, e1 := compile[B](n.Children[1], m)
+func compileBinary[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (func(B) (lib.Field, error), error) {
+	f0, e0 := compile[K, B](n.Children[0], m, k)
+	f1, e1 := compile[K, B](n.Children[1], m, k)
 	if e := errors.Join(e0, e1); e != nil {
 		return nil, e
 	}
@@ -267,10 +270,10 @@ func compileBinary[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, e
 	panic("unreachable")
 }
 
-func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, error), error) {
-	f0, e0 := compile[B](n.Children[0], m)
-	f1, e1 := compile[B](n.Children[1], m)
-	f2, e2 := compile[B](n.Children[2], m)
+func compileTernary[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (func(B) (lib.Field, error), error) {
+	f0, e0 := compile[K, B](n.Children[0], m, k)
+	f1, e1 := compile[K, B](n.Children[1], m, k)
+	f2, e2 := compile[K, B](n.Children[2], m, k)
 	if e := errors.Join(e0, e1, e2); e != nil {
 		return nil, e
 	}
@@ -286,7 +289,7 @@ func compileTernary[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, 
 	}, nil
 }
 
-func compileFunc[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
+func compileFunc[K any, B Ctx[K]](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	token := n.Token
 	return func(b B) (v lib.Field, e error) {
 		v0, ok := b.Exec(token)
@@ -303,10 +306,9 @@ var (
 	zeroBool  = lib.Bool(false)
 )
 
-func compileTryIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field, error), error) {
-	token := n.Token
+func compileTryIdent[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (func(B) (lib.Field, error), error) {
 	var zero lib.Field
-	switch m[token] {
+	switch m[n.Token] {
 	case exprInt:
 		zero = zeroInt
 	case exprFloat:
@@ -316,8 +318,9 @@ func compileTryIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field,
 	default:
 		panic("unreachable")
 	}
+	key := k(n.Token)
 	return func(b B) (v lib.Field, e error) {
-		v0, ok := b.Get(token)
+		v0, ok := b.Get(key)
 		if !ok {
 			return zero, nil
 		}
@@ -325,10 +328,11 @@ func compileTryIdent[B Ctx](n *Node, m map[string]exprType) (func(B) (lib.Field,
 	}, nil
 }
 
-func compileIdent[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
+func compileIdent[K any, B Ctx[K]](n *Node, _ map[string]exprType, k Key[K]) (func(B) (lib.Field, error), error) {
 	token := n.Token
+	key := k(n.Token)
 	return func(b B) (v lib.Field, e error) {
-		v0, ok := b.Get(token)
+		v0, ok := b.Get(key)
 		if !ok {
 			return v, fmt.Errorf(fmtKeyMiss, token)
 		}
@@ -336,7 +340,7 @@ func compileIdent[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, er
 	}, nil
 }
 
-func compileNumber[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
+func compileNumber[K any, B Ctx[K]](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	f, e := strconv.ParseFloat(n.Token, 64)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
@@ -357,7 +361,7 @@ func compileNumber[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, e
 	}, nil
 }
 
-func compileBool[B Ctx](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
+func compileBool[K any, B Ctx[K]](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
 	f, e := strconv.ParseBool(n.Token)
 	if e != nil {
 		return nil, fmt.Errorf(fmtConstFormat, n.Token)
