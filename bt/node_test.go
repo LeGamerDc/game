@@ -2,9 +2,10 @@ package bt
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/legamerdc/game/cc"
 	"github.com/legamerdc/game/lib"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -32,7 +33,7 @@ func (c *testCtx) Del(key string) {
 	delete(c.bb, key)
 }
 
-func (c *testCtx) Exec(f string) (lib.Field, bool) {
+func (c *testCtx) Exec(f string, _ ...lib.Field) (lib.Field, bool) {
 	if f == "now" {
 		return lib.Int64(c.time), true
 	}
@@ -55,16 +56,20 @@ func (e *testEvent) Kind() int32 {
 	return e.kind
 }
 
+func _s2s(s string) string {
+	return s
+}
+
 var (
 	_taskEnter       = "int d, wait, now; d = now()+wait"
 	_taskExec        = "int d, now; now() >= d ? -1 : d - now()"
 	_taskExit        = "int d; d = -1"
 	_guardBeforeTime = "int now, p; p<=0?true:(now()<p)"
 
-	_taskFuncEnter       = exec(cc.MustCompile[*testCtx](_taskEnter))
-	_taskFuncExec        = execTask(cc.MustCompile[*testCtx](_taskExec))
-	_taskFuncExit        = exec(cc.MustCompile[*testCtx](_taskExit))
-	_guardFuncBeforeTime = execBool(cc.MustCompile[*testCtx](_guardBeforeTime))
+	_taskFuncEnter       = exec(cc.MustCompile[string, *testCtx](_taskEnter, _s2s))
+	_taskFuncExec        = execTask(cc.MustCompile[string, *testCtx](_taskExec, _s2s))
+	_taskFuncExit        = exec(cc.MustCompile[string, *testCtx](_taskExit, _s2s))
+	_guardFuncBeforeTime = execBool(cc.MustCompile[string, *testCtx](_guardBeforeTime, _s2s))
 
 	// 健康相关守卫
 	_guardHealthBelow30 = "int health; health < 30"
@@ -85,16 +90,16 @@ var (
 	_guardHasMana    = "int mana; mana >= 30"
 
 	// 编译守卫函数
-	_guardFuncHealthBelow30 = execBool(cc.MustCompile[*testCtx](_guardHealthBelow30))
-	_guardFuncHealthBelow80 = execBool(cc.MustCompile[*testCtx](_guardHealthBelow80))
-	_guardFuncEnemyInSight  = execBool(cc.MustCompile[*testCtx](_guardEnemyInSight))
-	_guardFuncEnemyTooClose = execBool(cc.MustCompile[*testCtx](_guardEnemyTooClose))
-	_guardFuncNoEnemy       = execBool(cc.MustCompile[*testCtx](_guardNoEnemy))
-	_guardFuncNotInCombat   = execBool(cc.MustCompile[*testCtx](_guardNotInCombat))
-	_guardFuncInCombat      = execBool(cc.MustCompile[*testCtx](_guardInCombat))
-	_guardFuncAtDestination = execBool(cc.MustCompile[*testCtx](_guardAtDestination))
-	_guardFuncSkillReady    = execBool(cc.MustCompile[*testCtx](_guardSkillReady))
-	_guardFuncHasMana       = execBool(cc.MustCompile[*testCtx](_guardHasMana))
+	_guardFuncHealthBelow30 = execBool(cc.MustCompile[string, *testCtx](_guardHealthBelow30, _s2s))
+	_guardFuncHealthBelow80 = execBool(cc.MustCompile[string, *testCtx](_guardHealthBelow80, _s2s))
+	_guardFuncEnemyInSight  = execBool(cc.MustCompile[string, *testCtx](_guardEnemyInSight, _s2s))
+	_guardFuncEnemyTooClose = execBool(cc.MustCompile[string, *testCtx](_guardEnemyTooClose, _s2s))
+	_guardFuncNoEnemy       = execBool(cc.MustCompile[string, *testCtx](_guardNoEnemy, _s2s))
+	_guardFuncNotInCombat   = execBool(cc.MustCompile[string, *testCtx](_guardNotInCombat, _s2s))
+	_guardFuncInCombat      = execBool(cc.MustCompile[string, *testCtx](_guardInCombat, _s2s))
+	_guardFuncAtDestination = execBool(cc.MustCompile[string, *testCtx](_guardAtDestination, _s2s))
+	_guardFuncSkillReady    = execBool(cc.MustCompile[string, *testCtx](_guardSkillReady, _s2s))
+	_guardFuncHasMana       = execBool(cc.MustCompile[string, *testCtx](_guardHasMana, _s2s))
 )
 
 func execBool(f func(*testCtx) (lib.Field, error)) func(*testCtx) bool {
