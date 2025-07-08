@@ -82,21 +82,30 @@ func (m *MockKv) Del(key string) {
 	delete(m.data, key)
 }
 
-func (m *MockKv) Exec(key string) (v lib.Field, ok bool) {
-	v1, ok1 := m.getInt64("_1")
-	if !ok1 {
-		return
+func (m *MockKv) Exec(key string, vs ...lib.Field) (v lib.Field, ok bool) {
+	switch key {
+	case "f0":
+		return m._execF0(vs...)
+	case "f1":
+		return m._execF1(vs...)
 	}
-	return lib.Int64(v1 * v1), true
+	return
 }
 
-func (m *MockKv) getInt64(key string) (int64, bool) {
-	v1, ok1 := m.Get(key)
-	if !ok1 {
-		return 0, false
+func (m *MockKv) _execF0(_ ...lib.Field) (v lib.Field, ok bool) {
+	return lib.Int64(8), true
+}
+
+func (m *MockKv) _execF1(vs ...lib.Field) (v lib.Field, ok bool) {
+	if len(vs) < 1 {
+		return
 	}
-	vv, ok2 := v1.Int64()
-	return vv, ok2
+	v0 := vs[0]
+	vv0, ok0 := v0.Int64()
+	if !ok0 {
+		return
+	}
+	return lib.Int64(vv0 * vv0), true
 }
 
 func (m *MockKv) SetInt64(key string, value int64) {
@@ -330,7 +339,7 @@ func TestCompile(t *testing.T) {
 
 	// 测试函数调用
 	t.Run("函数调用", func(t *testing.T) {
-		f, e := Compile[string, *MockKv]("int x, ff, _1; _1=x; ff()+2*x+1", s2s)
+		f, e := Compile[string, *MockKv]("int x, f1, f0; f1(x)+2*x+f0()", s2s)
 		assert.Nil(t, e)
 
 		kv := NewMockKv()
@@ -339,7 +348,7 @@ func TestCompile(t *testing.T) {
 		assert.Nil(t, e1)
 		vv, ok := v.Int64()
 		assert.True(t, ok)
-		assert.InDelta(t, 9.0, vv, 0.00001)
+		assert.Equal(t, int64(16), vv)
 	})
 
 	// 测试复杂的运算符优先级
@@ -748,7 +757,7 @@ func TestCompileErrors(t *testing.T) {
 
 	// 测试未声明变量
 	t.Run("运行时变量未找到", func(t *testing.T) {
-		compiledFunc, err := Compile[string, *MockKv]("int x, y; x + y", s2s)
+		compiledFunc, err := Compile[string, *MockKv]("int x, y; x! + y", s2s)
 		assert.Nil(t, err)
 
 		kv := NewMockKv()

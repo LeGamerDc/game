@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 
 	"github.com/legamerdc/game/lib"
 )
@@ -24,7 +23,7 @@ type (
 	Ctx[K any] interface {
 		Get(K) (lib.Field, bool)
 		Set(K, lib.Field)
-		Exec(string) (lib.Field, bool)
+		Exec(string, ...lib.Field) (lib.Field, bool)
 	}
 
 	Key[K any] func(string) K
@@ -96,7 +95,7 @@ func compile[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (f func(
 	case NodeTryIdent:
 		return compileTryIdent[K, B](n, m, k)
 	case NodeFunc:
-		return compileFunc[K, B](n, m)
+		return compileFunc[K, B](n, m, k)
 	case NodeNumber:
 		return compileNumber[K, B](n, m)
 	case NodeBool:
@@ -289,10 +288,22 @@ func compileTernary[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (
 	}, nil
 }
 
-func compileFunc[K any, B Ctx[K]](n *Node, _ map[string]exprType) (func(B) (lib.Field, error), error) {
+func compileFunc[K any, B Ctx[K]](n *Node, m map[string]exprType, k Key[K]) (func(B) (lib.Field, error), error) {
 	token := n.Token
+	x := len(n.Children)
+	fs, e := _compileNodes[K, B](n.Children, m, k)
+	if e != nil {
+		return nil, e
+	}
 	return func(b B) (v lib.Field, e error) {
-		v0, ok := b.Exec(token)
+		vs := make([]lib.Field, 0, x)
+		for _, f := range fs {
+			if v, e = f(b); e != nil {
+				return
+			}
+			vs = append(vs, v)
+		}
+		v0, ok := b.Exec(token, vs...)
 		if !ok {
 			return v, fmt.Errorf(fmtIllFunc, token)
 		}
@@ -588,21 +599,14 @@ func _string2type(s string) (exprType, error) {
 	return -1, fmt.Errorf(fmtWrongVarType, s)
 }
 
-func _tmpKeys(m map[string]exprType) (keys []string) {
-	for k := range m {
-		if strings.HasPrefix(k, "_") {
-			keys = append(keys, k)
-		}
-	}
-	return
-}
-
-func _after[B any](f, after func(B) (lib.Field, error)) func(B) (lib.Field, error) {
-	return func(b B) (v lib.Field, e error) {
-		if v, e = f(b); e != nil {
+func _compileNodes[K any, B Ctx[K]](ns []*Node, m map[string]exprType, k Key[K]) (fs []func(B) (lib.Field, error), e error) {
+	fs = make([]func(B) (lib.Field, error), 0, len(ns))
+	for _, n := range ns {
+		var f func(B) (lib.Field, error)
+		if f, e = compile[K, B](n, m, k); e != nil {
 			return
 		}
-		_, _ = after(b)
-		return v, nil
+		fs = append(fs, f)
 	}
+	return
 }

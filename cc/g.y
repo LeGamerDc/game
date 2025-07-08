@@ -73,6 +73,7 @@ type Node struct {
 %type <node> power_expr
 %type <node> unary_expr
 %type <node> primary_expr
+%type <node> expr_list
 %type <str> type_name
 
 %right QUESTION COLON
@@ -372,14 +373,14 @@ unary_expr:
 ;
 
 primary_expr:
-    IDENT
+    IDENT NOT
     {
         $$ = &Node{
             Type: NodeIdent,
             Token: $1,
         }
     }
-|   IDENT DOLLAR
+|   IDENT
     {
         $$ = &Node{
             Type: NodeTryIdent,
@@ -391,6 +392,14 @@ primary_expr:
         $$ = &Node{
             Type: NodeFunc,
             Token: $1,
+        }
+    }
+|   IDENT LPAREN expr_list RPAREN
+    {
+        $$ = &Node{
+            Type: NodeFunc,
+            Token: $1,
+            Children: $3.Children,
         }
     }
 |   NUMBER
@@ -417,6 +426,21 @@ primary_expr:
 |   LPAREN expr RPAREN
     {
         $$ = $2
+    }
+;
+
+expr_list:
+    expr
+    {
+        $$ = &Node{
+            Type: NodeProgram,  // 临时使用NodeProgram类型作为列表容器
+            Children: []*Node{$1},
+        }
+    }
+|   expr_list COMMA expr
+    {
+        $1.Children = append($1.Children, $3)
+        $$ = $1
     }
 ;
 

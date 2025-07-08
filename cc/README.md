@@ -12,8 +12,11 @@ v.Bool() // hp / hp_max < 0.35 ?
 
 ## 主要功能
 
-- **yacc 解析表达式**：支持一元、二元、三元操作符，括号表达式，赋值
+- **yacc 解析表达式**：支持一元、二元、三元操作符，括号表达式，赋值，函数调用
 - **变量声明**：用户可以设定读取、存储黑板变量的类型，Calc会根据提供的类型生成性能最高的执行程序
+- **灵活的变量读取**：支持两种变量读取模式，安全读取（零值）和强制读取（报错）
+- **函数调用支持**：支持带参数的函数调用，参数通过可变参数传递
+- **自定义Key类型**：支持用户自选Key类型，提供更好的类型安全性
 - **类型推断**：Calc 会自动推断剩余部分的类型，如果发现冲突如 `bool x;float y;x==y` 会编译器报错。类型推断会尽量保证生成高性能程序
 - **编译检测**：编译器将检查语法错误，类型错误，避免后续执行浪费运行时cpu
 - **编译优化**：Calc 做了大量编译优化，保证运行期性能。
@@ -31,10 +34,15 @@ ASSIGNMENT: TOKEN = EXPR
 EXPR:
     UNARY_EXPR |
     BINARY_EXPR |
-    TERNARY_EXPR
+    TERNARY_EXPR |
+    FUNC_CALL |
+    IDENT |
+    IDENT!
 UNARY_EXPR: OP EXPR
 BINARY_EXPR: EXPR1 OP EXPR2
 TERNARY_EXPR: EXPR ? EXPR1 : EXPR2
+FUNC_CALL: IDENT() | IDENT(EXPR_LIST)
+EXPR_LIST: EXPR [, EXPR]
 OP: + | - | ! | ^ | * | / | % | || | && | == | != | < | <= | > | >=
 TYPE: int | float | bool 
 ```
@@ -48,7 +56,12 @@ TYPE: int | float | bool
 - 表达式为一元、二元、三元操作符递归组成。例如 "!(x || y)", "(x>3) && (y<7)", "x>3 ? y : (z+3)%7"
 - 支持的类型包括 int, float, bool。其中 int 在结合时可以根据情况转换为 float 或 bool。
 - 表达式中可以自由嵌入括号，提升执行顺序。
-- 表达式中如果读取了变量，用户需要保证黑板中存在变量，否则会报错找不到变量。
+- **变量读取**：
+  - `x` - 读取变量，如果变量不存在则使用类型的零值（int:0, float:0.0, bool:false）
+  - `x!` - 强制读取变量，如果变量不存在则报错
+- **函数调用**：
+  - `func()` - 无参数函数调用
+  - `func(expr1, expr2, ...)` - 带参数函数调用，参数会作为可变参数传递给Exec接口
 
 ### 运算符优先级（从高到低）
 1. `!`（逻辑非）、`+`/`-`（一元）
@@ -88,6 +101,12 @@ f, _ := Compile("float x,y,z; z = x > 3 ? y : y+2; z > 5")
 
 // bool 计算
 f, _ := Compile("float hp, hp_max, dist; (hp / hp_max > 0.35) && dist < 190")
+
+// 函数调用
+f, _ := Compile("int x; x = 5; sqrt(x * x + 16)")  // 调用sqrt函数，参数为x*x+16
+
+// 变量读取模式
+f, _ := Compile("int x, y!; x + y")  // x不存在时使用0，y不存在时报错
 ```
 
 错误语法举例：

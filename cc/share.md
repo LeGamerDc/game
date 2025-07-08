@@ -32,15 +32,18 @@ fmt.Println(v.Int64()) // 2 + 3^2 = 2 + 9 = 11
 ### 黑板接口
 
 ```go
-type Ctx interface {
-    Get(string) (blackboard.Field, bool)
-    Set(string, blackboard.Field)
-    Del(string)
-    Exec(string) (blackboard.Field, bool)
+type Ctx[K any] interface {
+    Get(K) (lib.Field, bool)
+    Set(K, lib.Field)
+    Exec(string, ...lib.Field) (lib.Field, bool)
 }
 ```
 
-基本上是对变量的 Get/Set/Del，这个变量使用 Field 类型，它是一种可以支持类型自动转换的结构体。Ctx 交给用户自己实现，这样可以嵌入各种已有的工程。
+- **Get/Set**：对变量的读取和设置，变量使用 Field 类型，支持类型自动转换
+- **Exec**：函数调用接口，支持可变参数传递
+- **泛型K**：支持用户自选Key类型，提供更好的类型安全性
+
+Ctx 交给用户自己实现，这样可以嵌入各种已有的工程。
 
 ## 支持的语法
 
@@ -57,10 +60,15 @@ ASSIGNMENT: TOKEN = EXPR
 EXPR:
     UNARY_EXPR |
     BINARY_EXPR |
-    TERNARY_EXPR
+    TERNARY_EXPR |
+    FUNC_CALL |
+    IDENT |
+    IDENT!
 UNARY_EXPR: OP EXPR
 BINARY_EXPR: EXPR1 OP EXPR2
 TERNARY_EXPR: EXPR ? EXPR1 : EXPR2
+FUNC_CALL: IDENT() | IDENT(EXPR_LIST)
+EXPR_LIST: EXPR [, EXPR]
 OP: + | - | ! | ^ | * | / | % | || | && | == | != | < | <= | > | >=
 TYPE: int | float | bool 
 ```
@@ -92,6 +100,12 @@ f, _ := Compile[*MockKv]("float hp, hp_max, dist; (hp / hp_max > 0.35) && dist <
 
 // 三元运算符
 f, _ := Compile[*MockKv]("int x; x > 0 ? x : -x")
+
+// 函数调用
+f, _ := Compile[*MockKv]("int x; x = 5; sqrt(x * x + 16)")  // 调用sqrt函数，参数为x*x+16
+
+// 变量读取模式
+f, _ := Compile[*MockKv]("int x, y!; x + y")  // x不存在时使用0，y不存在时报错
 ```
 
 ## 核心原理
@@ -153,31 +167,37 @@ int x; float y; x + y    // 结果会自动推断为 float 类型
 Ctx 的定义提供了完整的变量操作能力：
 
 ```go
-type Ctx interface {
-    Get(string) (blackboard.Field, bool)  // 获取变量
-    Set(string, blackboard.Field)         // 设置变量
-    Del(string)                           // 删除变量
-    Exec(string) (blackboard.Field, bool) // 函数调用
+type Ctx[K any] interface {
+    Get(K) (lib.Field, bool)             // 获取变量
+    Set(K, lib.Field)                    // 设置变量
+    Exec(string, ...lib.Field) (lib.Field, bool) // 函数调用
 }
 ```
 
-其中 Field 类型支持类型自动转换，用户可以根据实际需要实现 Ctx 接口。
+其中 Field 类型支持类型自动转换，K是泛型参数允许用户自选Key类型，用户可以根据实际需要实现 Ctx 接口。
+
+**变量读取模式**：
+- `x` - 安全读取：如果变量不存在，使用对应类型的零值（int:0, float:0.0, bool:false）
+- `x!` - 强制读取：如果变量不存在，抛出运行时错误
 
 ### 5. 函数调用支持
 
-Ctx 中的 `Exec` 接口用来调用函数。由于带参数的函数类型组合太多，我们使用了一个折中的方式：
+Ctx 中的 `Exec` 接口用来调用函数，现在支持直接传递参数：
 
-- 使用 `_` 开头的变量作为临时的函数参数变量
-- 函数实现者自己从 Ctx 中取 `_1`, `_2`, `_3`... 的变量
-- 表达式计算完毕后自动删除这些临时变量
+**函数调用语法**：
+- `func()` - 无参数函数调用
+- `func(expr1, expr2, ...)` - 带参数函数调用
+
+**参数传递机制**：
+- 函数参数会被计算后作为可变参数直接传递给 `Exec(string, ...lib.Field)` 接口
+- 函数实现者可以直接使用传入的参数，无需通过临时变量
 
 ```go
-f, _ := Compile[*MockKv]("int x, ff, _1; _1=x; ff()+2*x+1") 
-// ff() 函数可以从 Ctx 中获取 _1 参数，计算其平方
+f, _ := Compile[*MockKv]("int x; x = 5; sqrt(x * x + 16)") 
+// sqrt函数会接收到参数值41 (5*5+16)
 kv := NewMockKv()
-kv.SetInt64("x", 2)
 v, _ := f(kv)
-fmt.Println(v.Int64()) // 4 + 4 + 1 = 9 
+fmt.Println(v.Float64()) // sqrt(41) ≈ 6.4
 ```
 
 ## 性能优化
