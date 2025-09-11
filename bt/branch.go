@@ -112,14 +112,16 @@ func (x *joinBranch[C, E]) OnEvent(c C, e E) TaskStatus {
 	next := TaskNew
 	for i := range x.roots {
 		if x.tasks[i] >= TaskRunning {
-			x.tasks[i] = x.roots[i].OnEvent(c, e)
-			if x.tasks[i] >= TaskRunning {
+			st := x.roots[i].OnEvent(c, e)
+			if st >= TaskRunning {
+				x.tasks[i] = st
 				if next == TaskNew {
 					next = x.tasks[i]
 				} else {
 					next = min(next, x.tasks[i])
 				}
-			} else {
+			} else if st != TaskNew {
+				x.tasks[i] = next
 				x.complete++
 				if x.tasks[i] == TaskSuccess {
 					x.success++

@@ -114,9 +114,7 @@ func (x *alwaysGuard[C, E]) Parent() TaskI[C, E] {
 }
 
 func (x *alwaysGuard[C, E]) OnComplete(c C, cancel bool) {
-	if cancel {
-		x.r.Cancel(c)
-	}
+	x.r.Cancel(c)
 }
 
 func (x *alwaysGuard[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskStatus {
