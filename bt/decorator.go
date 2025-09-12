@@ -127,6 +127,15 @@ func (x *alwaysGuard[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskSt
 	return x.r.Execute(c)
 }
 
+// OnEvent forwards events to the rebuilt subtree while ensuring guard is respected.
+func (x *alwaysGuard[C, E]) OnEvent(c C, e E) TaskStatus {
+	// Re-check guard on every event just like Execute path.
+	if s := checkGuard(x.n, c); s != TaskSuccess {
+		return s
+	}
+	return x.r.OnEvent(c, e)
+}
+
 // guard 一种leaf task，他只是单纯地执行一次checkGuard并返回
 type guard[C Ctx, E EI] struct {
 	n      *Node[C, E]

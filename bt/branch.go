@@ -121,7 +121,7 @@ func (x *joinBranch[C, E]) OnEvent(c C, e E) TaskStatus {
 					next = min(next, x.tasks[i])
 				}
 			} else if st != TaskNew {
-				x.tasks[i] = next
+				x.tasks[i] = st
 				x.complete++
 				if x.tasks[i] == TaskSuccess {
 					x.success++

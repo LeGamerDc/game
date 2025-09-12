@@ -735,6 +735,84 @@ func TestEventInterrupt(t *testing.T) {
 		interruptedVal, _ := interrupted.Bool()
 		assert.True(t, interruptedVal)
 	})
+
+	t.Run("AlwaysGuard_Event_Forward", func(t *testing.T) {
+		ctx := newTestCtx()
+		ctx.time = 0
+
+		// Wrap an interruptible wait task with alwaysGuard that always passes
+		guarded := NewAlwaysGuard(successGuard,
+			NewTask(successGuard, newInterruptibleWaitTaskCreator(10, 1)),
+		)
+		root := &Root[*testCtx, *testEvent]{}
+		root.SetNode(guarded)
+
+		// First execute enters running state with remaining time
+		result := root.Execute(ctx)
+		assert.Equal(t, TaskStatus(10), result)
+
+		// Send matching interrupt event; should be forwarded and complete
+		event := &testEvent{kind: 1, data: "interrupt"}
+		eventResult := root.OnEvent(ctx, event)
+		assert.Equal(t, TaskSuccess, eventResult)
+
+		// Verify the interrupt flag is set by the child task
+		interrupted, exists := ctx.Get("interrupted")
+		assert.True(t, exists)
+		val, _ := interrupted.Bool()
+		assert.True(t, val)
+	})
+
+	t.Run("AlwaysGuard_Event_Guard_Fail", func(t *testing.T) {
+		ctx := newTestCtx()
+		ctx.time = 0
+
+		// Guard depends on time via _guardFuncBeforeTime
+		guarded := NewAlwaysGuard(_guardFuncBeforeTime,
+			NewTask(successGuard, newInterruptibleWaitTaskCreator(10, 1)),
+		)
+		root := &Root[*testCtx, *testEvent]{}
+		root.SetNode(guarded)
+
+		// Initially pass guard by setting p=-1
+		ctx.Set("p", lib.Int64(-1))
+		result := root.Execute(ctx)
+		assert.Equal(t, TaskStatus(10), result)
+
+		// Now make guard fail at event time
+		ctx.time = 5
+		ctx.Set("p", lib.Int64(3))
+		event := &testEvent{kind: 1, data: "interrupt"}
+		eventResult := root.OnEvent(ctx, event)
+		assert.Equal(t, TaskFail, eventResult)
+
+		// OnComplete should be called (cancel path), resetting d to -1
+		d, ok := ctx.Get("d")
+		if ok {
+			dv, _ := d.Int64()
+			assert.Equal(t, int64(-1), dv)
+		}
+	})
+
+	t.Run("AlwaysGuard_Event_No_Handle", func(t *testing.T) {
+		ctx := newTestCtx()
+		ctx.time = 0
+
+		guarded := NewAlwaysGuard(successGuard,
+			NewTask(successGuard, newInterruptibleWaitTaskCreator(10, 2)), // expects kind 2
+		)
+		root := &Root[*testCtx, *testEvent]{}
+		root.SetNode(guarded)
+
+		// Enter running state
+		result := root.Execute(ctx)
+		assert.Equal(t, TaskStatus(10), result)
+
+		// Send non-matching event (kind 3) -> should not handle
+		event := &testEvent{kind: 3, data: "no interrupt"}
+		eventResult := root.OnEvent(ctx, event)
+		assert.Equal(t, TaskNew, eventResult)
+	})
 }
 
 // 5. 编写一个复杂的 7-8 层的NPC战士行为树
