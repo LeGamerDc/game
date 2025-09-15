@@ -30,8 +30,8 @@ func (m *ArrayMap[K, V]) GetP(k K) (_ int, v *V) {
 	return -1, nil
 }
 
-// Push 设置kv到arrayMap中，为了更好的性能，Push不检查重复K
-func (m *ArrayMap[K, V]) Push(k K, v V) {
+// Put 设置kv到arrayMap中，为了更好的性能，Put不检查重复K
+func (m *ArrayMap[K, V]) Put(k K, v V) {
 	m.nk = append(m.nk, k)
 	m.nv = append(m.nv, v)
 }

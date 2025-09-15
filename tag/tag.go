@@ -16,7 +16,7 @@ func (t *Tag) AddTag(d *DB, tag int16) {
 		*pv++
 		return
 	}
-	t.count.Push(tag, 1)
+	t.count.Put(tag, 1)
 	t.rebuildCache(d)
 }
 

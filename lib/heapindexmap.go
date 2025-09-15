@@ -11,7 +11,7 @@ type HeapIndexMap[K comparable, S cmp.Ordered, V any] struct {
 	h []index[S]
 }
 
-func (m *HeapIndexMap[K, S, V]) Init(n int) {
+func (m *HeapIndexMap[K, S, V]) Reserve(n int) {
 	m.nk = make([]K, 0, n)
 	m.nv = make([]V, 0, n)
 	m.np = make([]int32, 0, n)
@@ -55,7 +55,7 @@ func (m *HeapIndexMap[K, S, V]) Remove(i int) {
 	m.nk, m.nv, m.np = m.nk[:n], m.nv[:n], m.np[:n]
 }
 
-func (m *HeapIndexMap[K, S, V]) Put(k K, v V, s S) {
+func (m *HeapIndexMap[K, S, V]) Push(k K, v V, s S) {
 	if i, ok := m.index[k]; ok {
 		m.nv[i] = v
 		m.Update(int(i), s)
