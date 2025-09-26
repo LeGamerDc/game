@@ -88,3 +88,17 @@ func TestMatchAllNoneSome(t *testing.T) {
 	q5 := Query{all: []int16{a}}
 	assert.True(t, tg.Match(q5))
 }
+
+func TestTagIsAncestor(t *testing.T) {
+	db := NewDB()
+	a := db.Compile("a")
+	ab := db.Compile("a.b")
+	abc := db.Compile("a.b.c")
+
+	assert.True(t, db.IsAncestor(a, ab))
+	assert.True(t, db.IsAncestor(a, abc))
+	assert.True(t, db.IsAncestor(ab, abc))
+	assert.False(t, db.IsAncestor(abc, ab))
+	assert.False(t, db.IsAncestor(abc, a))
+	assert.False(t, db.IsAncestor(ab, a))
+}

@@ -26,6 +26,16 @@ func (b *DB) Parent(i int16) int16 {
 	return b.pi[i]
 }
 
+func (b *DB) IsAncestor(p, i int16) bool {
+	for i != -1 {
+		if i == p {
+			return true
+		}
+		i = b.pi[i]
+	}
+	return false
+}
+
 func (b *DB) String(i int16) string {
 	if i < 0 || int(i) >= len(b.pi) {
 		return "_"
