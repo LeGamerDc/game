@@ -36,6 +36,10 @@ type (
 		At(i int) E
 	}
 
+	ThinkMeta struct {
+		CurrentRound int
+	}
+
 	// ThinkCtx intentionally exposes only read access to world state plus
 	// targeted effect/signal outputs. Public/entity/world writes must go
 	// through effect commit.
@@ -43,6 +47,7 @@ type (
 		World   W
 		Emit    func(uint64, S)
 		Publish func(uint64, E)
+		Meta    *ThinkMeta
 	}
 
 	// CommitCtx is used by owner-local reducers after effects are bucketed
