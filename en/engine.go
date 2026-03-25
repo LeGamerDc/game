@@ -15,7 +15,7 @@ type (
 		Now() int64
 	}
 
-	UI interface{}
+	UI any
 
 	EI interface {
 		Kind() EventKind
