@@ -5,7 +5,10 @@ type (
 	SignalKind int32
 )
 
-const RefWorld uint64 = 1 << 63
+const (
+	RefWorld uint64 = 1 << 63
+	RefNone  uint64 = 0
+)
 
 func IsWorldRef(r uint64) bool { return r == RefWorld }
 
@@ -13,9 +16,13 @@ func IsSerialRef(r uint64) bool { return r >= RefWorld }
 
 func IsNormalRef(r uint64) bool { return r < RefWorld }
 
+func IsValidRef(r uint64) bool { return r != RefNone }
+
 type (
 	WorldView interface {
 		Now() int64
+		Version() uint32
+		Round() int32
 	}
 
 	SignalI interface {
@@ -36,10 +43,6 @@ type (
 		At(i int) E
 	}
 
-	ThinkMeta struct {
-		CurrentRound int
-	}
-
 	// ThinkCtx intentionally exposes only read access to world state plus
 	// targeted effect/signal outputs. Public/entity/world writes must go
 	// through effect commit.
@@ -47,7 +50,6 @@ type (
 		World   W
 		Emit    func(uint64, S)
 		Publish func(uint64, E)
-		Meta    *ThinkMeta
 	}
 
 	// CommitCtx is used by owner-local reducers after effects are bucketed
