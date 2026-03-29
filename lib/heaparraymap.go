@@ -18,6 +18,16 @@ type HeapArrayMap[K comparable, S cmp.Ordered, V any] struct {
 	h []index[S]
 }
 
+func (m *HeapArrayMap[K, S, V]) Clear() {
+	clear(m.nk)
+	clear(m.nv)
+	clear(m.h)
+	m.nk = m.nk[:0]
+	m.nv = m.nv[:0]
+	m.np = m.np[:0]
+	m.h = m.h[:0]
+}
+
 func (m *HeapArrayMap[K, S, V]) Reserve(n int) {
 	m.nk = slices.Grow(m.nk, n)
 	m.nv = slices.Grow(m.nv, n)

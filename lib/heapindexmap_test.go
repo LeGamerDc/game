@@ -60,7 +60,7 @@ func TestHeapIndexMap(t *testing.T) {
 	assert.True(t, m.check())
 
 	// 验证Filter结果
-	m.Iter(func(v int) {
+	m.Iter(func(_ string, v int) {
 		assert.GreaterOrEqual(t, v, 200)
 	})
 
@@ -151,6 +151,64 @@ func TestHeapIndexMap_RemoveVariousPositions(t *testing.T) {
 		i, _ = h.Get(midKey)
 		assert.Equal(t, -1, i)
 	}
+}
+
+// TestHeapIndexMapClear 测试HeapIndexMap的Clear功能
+func TestHeapIndexMapClear(t *testing.T) {
+	var m HeapIndexMap[string, int, int]
+	m.Reserve(4)
+
+	m.Push("a", 1, 10)
+	m.Push("b", 2, 5)
+	m.Push("c", 3, 20)
+
+	// 记录Clear前的容量
+	capBefore := cap(m.nk)
+
+	m.Clear()
+
+	// 所有元素不可见
+	i, v := m.Get("a")
+	assert.Equal(t, -1, i)
+	assert.Equal(t, 0, v)
+
+	i, v = m.Get("b")
+	assert.Equal(t, -1, i)
+	assert.Equal(t, 0, v)
+
+	// Size归零
+	assert.Equal(t, 0, m.Size())
+
+	// 长度归零，堆为空
+	count := 0
+	m.Iter(func(_ string, v int) { count++ })
+	assert.Equal(t, 0, count)
+
+	// 容量保留，避免重新分配
+	assert.Equal(t, capBefore, cap(m.nk))
+
+	// Clear后内部一致性校验
+	assert.True(t, m.check())
+
+	// Clear后可以正常复用
+	m.Push("x", 10, 3)
+	m.Push("y", 20, 7)
+
+	assert.True(t, m.check())
+	assert.Equal(t, 2, m.Size())
+
+	i, v = m.Get("x")
+	assert.NotEqual(t, -1, i)
+	assert.Equal(t, 10, v)
+
+	// 堆顶应是优先级最小的 x(3)
+	_, k, _, s := m.Top()
+	assert.Equal(t, "x", k)
+	assert.Equal(t, 3, s)
+
+	// 旧元素依然不存在
+	i, _ = m.Get("a")
+	assert.Equal(t, -1, i)
 }
 
 func TestHeapIndexMap_UpdateUpDown(t *testing.T) {

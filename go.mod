@@ -1,10 +1,11 @@
 module github.com/legamerdc/game
 
-go 1.23
+go 1.25.0
 
 require (
 	github.com/json-iterator/go v1.1.12
 	github.com/stretchr/testify v1.10.0
+	golang.org/x/sys v0.42.0
 )
 
 require (

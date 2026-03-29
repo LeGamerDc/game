@@ -132,7 +132,7 @@ func BenchmarkIndexMap_Iter(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.Iter(func(v int32) {
+		m.Iter(func(_ int32, v int32) {
 			y = v
 		})
 	}
@@ -205,6 +205,59 @@ func TestArrayMap(t *testing.T) {
 		return count >= 1 // 只处理第一个元素
 	})
 	assert.Equal(t, 1, count)
+}
+
+// TestArrayMapClear 测试ArrayMap的Clear功能
+func TestArrayMapClear(t *testing.T) {
+	var m ArrayMap[string, int]
+
+	m.Put("a", 1)
+	m.Put("b", 2)
+	m.Put("c", 3)
+
+	// 记录Clear前的容量
+	capBefore := cap(m.nk)
+
+	m.Clear()
+
+	// 所有元素不可见
+	i, v := m.Get("a")
+	assert.Equal(t, -1, i)
+	assert.Equal(t, 0, v)
+
+	i, v = m.Get("b")
+	assert.Equal(t, -1, i)
+	assert.Equal(t, 0, v)
+
+	// 长度归零
+	count := 0
+	m.Iter(func(k string, v int) bool {
+		count++
+		return false
+	})
+	assert.Equal(t, 0, count)
+
+	// 容量保留，避免重新分配
+	assert.Equal(t, capBefore, cap(m.nk))
+
+	// Clear后可以正常复用
+	m.Put("x", 10)
+	m.Put("y", 20)
+
+	i, v = m.Get("x")
+	assert.Equal(t, 0, i)
+	assert.Equal(t, 10, v)
+
+	i, v = m.Get("y")
+	assert.Equal(t, 1, i)
+	assert.Equal(t, 20, v)
+
+	count = 0
+	m.Iter(func(k string, v int) bool {
+		count++
+		return false
+	})
+	assert.Equal(t, 2, count)
 }
 
 // TestArrayMapEdgeCases 测试ArrayMap的边界情况

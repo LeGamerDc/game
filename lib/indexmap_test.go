@@ -51,10 +51,58 @@ func TestIndexMap(t *testing.T) {
 
 	// 测试Iter
 	values := []int{}
-	m.Iter(func(v int) {
+	m.Iter(func(_ string, v int) {
 		values = append(values, v)
 	})
 	assert.Len(t, values, 2)
+}
+
+// TestIndexMapClear 测试IndexMap的Clear功能
+func TestIndexMapClear(t *testing.T) {
+	var m IndexMap[string, int]
+	m.Init(4)
+
+	m.Put("a", 1)
+	m.Put("b", 2)
+	m.Put("c", 3)
+
+	// 记录Clear前的容量
+	capBefore := cap(m.nk)
+
+	m.Clear()
+
+	// 所有元素不可见
+	i, v := m.Get("a")
+	assert.Equal(t, -1, i)
+	assert.Equal(t, 0, v)
+
+	i, v = m.Get("b")
+	assert.Equal(t, -1, i)
+	assert.Equal(t, 0, v)
+
+	// 长度归零
+	count := 0
+	m.Iter(func(_ string, v int) { count++ })
+	assert.Equal(t, 0, count)
+
+	// 容量保留，避免重新分配
+	assert.Equal(t, capBefore, cap(m.nk))
+
+	// Clear后可以正常复用
+	m.Put("x", 10)
+	m.Put("y", 20)
+
+	i, v = m.Get("x")
+	assert.Equal(t, 0, i)
+	assert.Equal(t, 10, v)
+
+	i, v = m.Get("y")
+	assert.Equal(t, 1, i)
+	assert.Equal(t, 20, v)
+
+	count = 0
+	m.Iter(func(_ string, v int) { count++ })
+	assert.Equal(t, 2, count)
 }
 
 // TestIndexMapEdgeCases 测试IndexMap的边界情况
@@ -74,7 +122,7 @@ func TestIndexMapEdgeCases(t *testing.T) {
 	m.Put(1, "second") // 应该更新而不是添加新元素
 
 	count := 0
-	m.Iter(func(v string) {
+	m.Iter(func(_ int, v string) {
 		count++
 		assert.Equal(t, "second", v)
 	})

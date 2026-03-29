@@ -11,6 +11,17 @@ type HeapIndexMap[K comparable, S cmp.Ordered, V any] struct {
 	h []index[S]
 }
 
+func (m *HeapIndexMap[K, S, V]) Clear() {
+	clear(m.index)
+	clear(m.nk)
+	clear(m.nv)
+	clear(m.h)
+	m.nk = m.nk[:0]
+	m.nv = m.nv[:0]
+	m.np = m.np[:0]
+	m.h = m.h[:0]
+}
+
 func (m *HeapIndexMap[K, S, V]) Reserve(n int) {
 	m.nk = make([]K, 0, n)
 	m.nv = make([]V, 0, n)
@@ -82,9 +93,9 @@ func (m *HeapIndexMap[K, S, V]) Size() int {
 	return len(m.nk)
 }
 
-func (m *HeapIndexMap[K, S, V]) Iter(f func(V)) {
-	for _, v := range m.nv {
-		f(v)
+func (m *HeapIndexMap[K, S, V]) Iter(f func(K, V)) {
+	for i, v := range m.nv {
+		f(m.nk[i], v)
 	}
 }
 

@@ -7,6 +7,13 @@ type ArrayMap[K comparable, V any] struct {
 	nv []V
 }
 
+func (m *ArrayMap[K, V]) Clear() {
+	clear(m.nk)
+	clear(m.nv)
+	m.nk = m.nk[:0]
+	m.nv = m.nv[:0]
+}
+
 func (m *ArrayMap[K, V]) Reserve(n int) {
 	m.nk = slices.Grow(m.nk, n)
 	m.nv = slices.Grow(m.nv, n)

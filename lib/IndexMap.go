@@ -12,6 +12,14 @@ func (m *IndexMap[K, V]) Init(n int) {
 	m.nv = make([]V, 0, n)
 }
 
+func (m *IndexMap[K, V]) Clear() {
+	clear(m.index)
+	clear(m.nk)
+	clear(m.nv)
+	m.nk = m.nk[:0]
+	m.nv = m.nv[:0]
+}
+
 func (m *IndexMap[K, V]) Get(k K) (_ int, v V) {
 	if i, ok := m.index[k]; ok {
 		return int(i), m.nv[i]
@@ -50,8 +58,8 @@ func (m *IndexMap[K, V]) Remove(i int) {
 	m.nk, m.nv = m.nk[:n], m.nv[:n]
 }
 
-func (m *IndexMap[K, V]) Iter(f func(V)) {
-	for _, v := range m.nv {
-		f(v)
+func (m *IndexMap[K, V]) Iter(f func(K, V)) {
+	for i, v := range m.nv {
+		f(m.nk[i], v)
 	}
 }
