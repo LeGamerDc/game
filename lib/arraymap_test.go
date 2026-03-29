@@ -3,6 +3,7 @@ package lib
 import (
 	"fmt"
 	"iter"
+	"maps"
 	"math/rand/v2"
 	"testing"
 
@@ -57,9 +58,7 @@ func BenchmarkMap_Get(b *testing.B) {
 		x int32
 		y bool
 	)
-	for k, v := range prepare(n) {
-		m[k] = v
-	}
+	maps.Insert(m, prepare(n))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		k := int32(i % (n + 2))
@@ -109,9 +108,7 @@ func BenchmarkMap_Iter(b *testing.B) {
 		m    = make(map[int32]int32)
 		x, y int32
 	)
-	for k, v := range prepare(n) {
-		m[k] = v
-	}
+	maps.Insert(m, prepare(n))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for k, v := range m {

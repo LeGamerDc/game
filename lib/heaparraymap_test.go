@@ -80,7 +80,7 @@ func TestHeapArrayMapFuzzy(t *testing.T) {
 	n := 10000
 	m := 1000
 	var h HeapArrayMap[int, int, int]
-	for b := 0; b < n; b++ {
+	for range n {
 		k := rand.N(m) + 1
 		i, v := h.Get(k)
 		s := rand.N(m) + 1
@@ -104,7 +104,7 @@ func TestHeapIndexMapFuzzy(t *testing.T) {
 	m := 1000
 	var h HeapIndexMap[int, int, int]
 	h.Reserve(1000)
-	for b := 0; b < n; b++ {
+	for range n {
 		k := rand.N(m) + 1
 		i, v := h.Get(k)
 		s := rand.N(m) + 1
@@ -126,7 +126,7 @@ func TestHeapIndexMapFuzzy(t *testing.T) {
 func TestHeapIndexMap_Filter(t *testing.T) {
 	var h HeapIndexMap[int, int, int]
 	h.Reserve(1000)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		h.Push(i, i, 100-i)
 	}
 	h.Filter(func(i int) (keep bool) {
@@ -226,7 +226,7 @@ func TestHeapProperty(t *testing.T) {
 
 func TestHeapArrayMap_PopOrder(t *testing.T) {
 	var h HeapArrayMap[int, int, int]
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		p := rand.N(1000)
 		h.Push(i, i, p)
 	}
@@ -304,7 +304,7 @@ func TestHeapArrayMap_RemovePositions(t *testing.T) {
 
 func TestHeapArrayMap_DuplicatePriorities(t *testing.T) {
 	var h HeapArrayMap[string, int, string]
-	for i := 0; i < 10; i++ { // 插入多组相同优先级
+	for i := range 10 { // 插入多组相同优先级
 		h.Push("a"+string(rune('0'+i)), "A", 5)
 		h.Push("b"+string(rune('0'+i)), "B", 5)
 	}

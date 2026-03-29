@@ -146,7 +146,7 @@ func (x *joinBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskS
 		l := len(x.n.Children)
 		x.roots = make([]Root[C, E], l)
 		x.tasks = make([]TaskStatus, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			x.roots[i].SetNode(x.n.Children[i])
 		}
 	}
@@ -179,7 +179,7 @@ func (x *joinBranch[C, E]) Execute(c C, stk *TaskI[C, E], from TaskStatus) TaskS
 
 func _shuffle(n int) []int32 {
 	o := make([]int32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		o[i] = int32(i)
 	}
 	rand.Shuffle(n, func(i, j int) {

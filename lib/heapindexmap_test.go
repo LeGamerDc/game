@@ -85,7 +85,7 @@ func TestHeapIndexMap(t *testing.T) {
 func TestHeapIndexMap_PopOrder(t *testing.T) {
 	var h HeapIndexMap[int, int, int]
 	h.Reserve(0)
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		p := rand.N(1000)
 		h.Push(i, i, p)
 	}

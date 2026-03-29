@@ -4,22 +4,29 @@ Last Updated: 2026-03-29
 
 ## Current Focus
 
-- `en/wheel.go` 的 timerWheel 重构（Unified Log + Epoch-based Lazy Clear）已完成，所有测试通过，`go build ./...` 通过。
-- 已确认：timer wheel 不是通用定时器，而是服务 scheduler 的 thread-local write + block-sharded read 结构。
-- 下一步：继续处理已确认的接口问题（Ref 空间、Publish 分离），并把 scheduler 侧的 thread→block 构造与 wheel 对接收口。
+- `en/scheduler.go` 并行 tick 调度器已完成重构：getLogic 注入、双缓冲 signal collectors、去除 per-logic 去重。
+- 下一步：实现串行模式（cascade depth）、processTick 的模式路由（frontier < ThinkConcurrencyThreshold 时切换到串行）。
+- 仍有两个已确认的接口问题待修复（Ref 空间歧义、Publish 不区分 Entity/World Effect）。
 
 ## Latest State
 
 - `en/world.go` 是当前引擎接口讨论的权威入口。
 - `WorldView` 目前已包含 `Now()/Version()/Round()` 三个只读观测接口。
-- `en/schedule.go` 已实现 Scheduler 核心运行时。
-- `en/wheel.go` 已完成 Unified Log + Epoch-based Lazy Clear 重构：timerCollector 使用单个 `log IndexMap[V, timerEntry]`（unified log）替代原先的 `blocks []int` + `slot []IndexMap[V, int64]`（per-block 预分配）；wheel 的 `IndexSet[V]` 替换为 `epochSet[V]`（epoch + IndexSet，惰性清空）；merge() 复杂度从 O(Σ blocks_per_thread) 降为 O(actual_registrations)，advance() 从 O(blockSize + Σ blocks_per_thread) 降为 O(threads)；接口签名和语义不变，现有测试无需修改。
+- `en/scheduler.go` 已完成重构，核心设计：
+  - **getLogic 注入**：`NewScheduler` 接受 `getLogic func(uint64)(L,bool)` 参数，由外部（如 WorldView 实现）负责 logic 生命周期管理。Scheduler 不再内部维护 logic 注册表。
+  - **双缓冲 Signal Collectors**：`signalRead`（消费）+ `signalWrite`（产出），superstep 结束 swap + clear。Think/Apply 共用 signalWrite（barrier 保证时序安全）。溢出信号自动保留在 signalRead 中延迟到下一 tick。
+  - **无 per-logic 去重**：Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。去除了 threadInboxes/threadFrontiers/pendingInbox/routeSignals/buildInitialFrontier/deferRemainingInboxes。Logic 自身处理重复激活。
+  - **外部输入**：`Emit()` 追加到 `pending` slice，`injectPending` 在 tick 开始时注入 `signalRead[0]`。
+  - **ProcessTick 生命周期**：injectPending → superstep 循环（parallelThink → computeApplyAssignment → parallelApply → swapSignalBuffers → resetEffectCollectors）→ merge/advance timer wheel
+  - Think 阶段按 block 稳定分配到 thread（`blockId % Concurrency`，初始化时固定）
+  - Apply 阶段使用 LPT（Longest Processing Time first）近似算法按 effect 数量动态分配 block
+  - Timer wheel 集成：Think 产出的 delay → thread-local set → tick 结束 merge + advance
+  - `signalGroupBufs[threadId]` 用于 Think worker 内部按 targetRef 分组 signal，遍历 signalRead block 时同一 block 可能包含多个 logic 的 signal，分组后逐组调 Think
+- `en/scheduler_test.go` 包含测试覆盖全部核心路径，含 race detector 通过。
+- `en/wheel.go` 已完成 Unified Log + Epoch-based Lazy Clear 重构。
+- `en/block_collector.go` 提供 per-thread block-sharded collector，被 scheduler 用于 `refVal[E]` 和 `refVal[S]` 收集。
 - `docs/design/parallel.md` 是 parallel tick 设计意图的主文档。
-- `docs/design/scheduler.md` 是 Scheduler 并发调度模型设计文档（新增）。
-- timer wheel 相关结论已更新：不要求全局覆盖旧 timer；局部取消仅作用于尚未 merge 的本地登记；`delay > wheelSize` 需要 clamp 到最远槽位。
-- timer wheel 已完成从 per-block 预分配方案到 Unified Log + Epoch-based Lazy Clear 的重构；unified log 消除了 thread 持有全量 block slot 的内存开销，epoch-based lazy clear 消除了 advance 时逐元素清空 wheel slot 的开销。
-- `en/wheel_test.go` 已新增并通过测试，覆盖全局 block 写入、超长 delay clamp、pre-merge cancel、post-merge cancel 不清旧 timer、advance 清理、同槽去重等关键语义；重构后测试无需修改且仍通过（共 6 个测试）。
-- `docs/design/feedback.md` 保存了上一轮审计的完整对话记录。
+- `docs/design/scheduler.md` 是 Scheduler 并发调度模型设计文档。
 
 ## Confirmed Decisions
 
@@ -50,58 +57,65 @@ Last Updated: 2026-03-29
 9. Think 激活类型不需要框架层分类。
 10. Ack 内嵌在 Think / private state 中。
 
-### Scheduler 并发模型
+### Logic 查找
 
-以下结论来自 Scheduler 设计讨论。
+- `getLogic func(uint64)(L,bool)` 由外部注入，Scheduler 不在内部维护 logic 注册表。
+- 原因：`WorldView.GetLogic` 因 Go 泛型类型不变性（type invariance）无法表达返回匹配类型参数的 Logic。循环类型依赖（WorldView → Logic[W,S,E] → WorldView）和只读语义冲突也无法解决。
+- 调用方须保证 getLogic 在并发调用时安全（通常是底层 map 在 tick 内无写即可）。
+
+### 去重
+
+- Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。Logic 自身处理重复激活。
+- 消除了 `threadInboxes`/`threadFrontiers`/`pendingInbox`/`routeSignals`/`buildInitialFrontier`/`deferRemainingInboxes`，大幅简化调度器内部状态。
+
+### 双缓冲 Signal Collectors
+
+- `signalRead`（消费）+ `signalWrite`（产出），superstep 结束 swap + clear。
+- Think/Apply 共用 signalWrite（barrier 保证时序安全：Think → barrier → Apply → barrier → swap）。
+- 溢出信号自动保留在 signalRead 中延迟到下一 tick（injectPending 不清空 signalRead）。
+- 外部输入通过 `Emit()` → `pending` → `injectPending` 注入 `signalRead[0]`。
+
+### Scheduler 并发模型
 
 **并发控制**：
 - Think 阈值 500 开启并发，并发 worker 数 5，每 tick 最多 3 轮 superstep。
-- 参数统一放入 `ScheduleMeta` 结构体。
+- 参数统一放入 `ScheduleMeta` 结构体，零值字段在 NewScheduler 中补齐默认值。
 
 **Block-based Effect 收集**：
-- 不按 RefId 逐一收集，而是按 `targetRef % BlockSize`（如 137）分块。
-- 消除了单独的 Merge Phase：Apply 阶段按 blockId 分配 worker，直接跨 Think worker 读取对应 block。
-- Block 内按 targetRef 聚合后逐个 Apply。
+- 按 `hash(targetRef) % BlockSize` 分块，collector 存储 `refVal[E]{ref, val}` 保留 targetRef。
+- Apply 阶段按 blockId 分配 worker，跨所有 Think worker 读取对应 block，按 targetRef 聚合后 Apply。
+- 聚合使用 per-thread `map[uint64][]E` 缓冲，处理完后截断 slice 到 0 长度保留 capacity。
 
-**Worker 亲和性**：
-- Think 阶段 Logic 按 `RefId % WorkerCount` 稳定分配到 worker。
-- 同一 Logic 跨 superstep 轮次始终在同一 worker，因此 timerRegs 可以是 worker 本地 map，无锁无冲突。
-- Tick 结束后统一合并 timerRegs 到全局 timer wheel。
+**Block→Thread 映射**：
+- Think 阶段：`blockId % Concurrency → threadId`，初始化时固定，跨 superstep/tick 一致。
+- Apply 阶段：LPT（Longest Processing Time first）近似算法按 effect 数量动态分配 block。
 
-**World Effect 并行**：
-- World（RefWorld）作为普通 block 成员参与 Apply 阶段并发。
-- World Apply 内部串行处理多个 world effect，与 entity Apply 并行。
-- 安全前提：snapshot 隔离、独立 signal buffer、despawn 只标记不碰 entity state。
-
-**串行模式**：
+**串行模式（设计已确认，代码待实现）**：
 - 无 superstep 概念，无 frontier push。
-- 所有 signal/effect 当场处理（立即 Apply、立即路由），深度优先递归。
-- 用 cascade depth 控制递归深度，`depth >= MaxSupersteps` 时截断，signal 留到下一 tick。
-- 语义差异（执行顺序不同于并发模式）对游戏场景可接受：tick 内事件顺序任意合法。
+- 深度优先递归，cascade depth 控制递归深度。
+- 串行 cascade depth 预算 = `MaxSupersteps - 已完成并发轮次`。
 - 通过 ThinkCtx/CommitCtx 闭包实现差异，Logic 接口层完全兼容。
 
-**Timer Wheel**：
-- 单层环形数组，大小 200。
-- 结构目标是适配 scheduler 的 thread/block 分片：Think 阶段 thread-local write，tick 消费阶段按 block 读取。
-- 当前不要求“从 wheel 中移除旧 timer”这一全局覆盖语义；重复激活由 logic 自身在 Think 时剔除无效激活，额外一次激活成本可接受。
-- `delay <= 0` 仅表示不新增/取消当前 thread 本地、尚未 merge 的登记，不承诺清除已经 merge 到 wheel 的旧条目。
-- `delay > TimerWheelSize` 应 clamp 到最远 slot，logic 被唤醒后重新注册剩余 delay（amortized 额外 Think 开销可接受）。
-- merge/advance 已通过 Unified Log + Epoch-based Lazy Clear 重构完成优化：
-  - timerCollector 使用单个 `log IndexMap[V, timerEntry]` 统一记录所有登记，不再按 block 预分配 slot，消除了全量 block 内存开销。
-  - wheel slot 使用 `epochSet[V]`（epoch + IndexSet），advance 时仅递增 epoch 实现惰性清空，不逐元素删除。
-  - merge() 只遍历各 thread 的 log 中实际存在的登记条目，复杂度 O(actual_registrations)。
-  - advance() 只需对每个 thread 递增 epoch 并重置 log，复杂度 O(threads)。
-  - `set`/`merge`/`advance`/`get` 的签名和语义保持不变，现有测试无需修改。
-
-**模式切换**：
+**模式切换（设计已确认，代码待实现）**：
 - 每轮 superstep 独立判断，frontier 缩小到阈值以下可切换到串行模式。
-- 串行 cascade depth 预算 = `MaxSupersteps - 已完成并发轮次`。
+
+**World Effect**：
+- RefWorld 按 `hash(RefWorld) % BlockSize` 落入某个 block，作为普通 target 参与 Apply。
+
+### Timer Wheel
+
+- 单层环形数组，大小 200。
+- Unified Log + Epoch-based Lazy Clear 已完成重构。
+- merge() O(actual_registrations)，advance() O(threads)。
+- `delay > TimerWheelSize` clamp 到最远 slot。
+- `delay <= 0` 仅取消 thread-local 未 merge 的登记。
+- 接口签名和语义不变，6 个测试通过。
 
 ### Scheduler 当前实现约束
 
-- Scheduler 以 `Logic.ID()` 作为 owner/ref 权威索引，world effect 也通过同一套 Apply 路径处理；若需要 world effect，调用方需要注册一个 `ID()==RefWorld` 的 world logic。
-- `Scheduler.Emit` / ready set 既承担外部输入注入，也承担 tick 溢出后的 next-tick defer。
-- 目前没有错误返回或日志 hook；非法 target ref / 未注册 logic 的 signal/effect 会被 runtime 统计为 dropped。
+- Scheduler 以 `Logic.ID()` 作为 owner/ref 权威索引。
+- `Scheduler.Emit` / pending 承担外部输入注入。溢出信号通过 signalRead 自动延迟到下一 tick。
+- 非法 target ref / 未注册 logic 的 signal/effect 被静默丢弃。
 
 ## Open Questions
 
@@ -109,31 +123,30 @@ Last Updated: 2026-03-29
 - LogicMeta 如何暴露给调度器——设计文档有描述，接口未体现，尚未讨论。
 - ThinkCtx 函数引用可被 Logic 逃逸存储——Go 语言限制，无法在接口层解决，只能靠规范和 review。
 - `engine.go` 中现有 GAS 模式与新并行模型的迁移隔离策略——尚未讨论。
-- `docs/design/feedback.md` 应并入主设计文档还是保留为评审记录——上轮遗留。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
 - Think 返回 delay 的时间基准：相对当前 tick 的偏移量？
 - Block 粒度（137）是否适合所有负载模式。
 - 串行模式下同一 logic 被多条因果链触发时的 depth 处理策略。
 - `TickStats` 是否需要进一步扩展为 tracing/debug API。
 - 当前 world effect 复用 `Logic` 接口是否足够清晰，还是应单独抽出 world reducer 接口。
-- 是否需要在 `schedule.go` 中继续收敛出显式的 block 分配辅助结构，以避免后续调用 timer wheel 时重复推导 thread/block 关系。
+- Worker pool 替代每 superstep 创建 goroutine（TODO 已标注在代码中）。
+- `docs/design/feedback.md` 应并入主设计文档还是保留为评审记录。
 
 ## Relevant Files
 
 - `AGENTS.md`
 - `en/world.go`
-- `en/schedule.go`
+- `en/scheduler.go`
+- `en/scheduler_test.go`
 - `en/wheel.go`
 - `en/wheel_test.go`
-- `en/schedule_test.go`
+- `en/block_collector.go`
 - `en/engine_bak.go`
 - `docs/design/parallel.md`
 - `docs/design/scheduler.md`
 - `docs/design/feedback.md`
 - `docs/references/parallel_theory.md`
 - `docs/references/survey.md`
-- `lib/indexmap.go`
-- `lib/heapindexmap.go`
 
 ## Should
 

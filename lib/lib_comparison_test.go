@@ -15,14 +15,14 @@ func BenchmarkComparison(b *testing.B) {
 	// 准备测试数据
 	keys := make([]int, size)
 	values := make([]string, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		keys[i] = rand.N(size * 2)
 		values[i] = fmt.Sprintf("value_%d", i)
 	}
 
 	b.Run("ArrayMap_Get", func(b *testing.B) {
 		var m ArrayMap[int, string]
-		for i := 0; i < size; i++ {
+		for i := range size {
 			m.Put(keys[i], values[i])
 		}
 		b.ResetTimer()
@@ -34,7 +34,7 @@ func BenchmarkComparison(b *testing.B) {
 	b.Run("IndexMap_Get", func(b *testing.B) {
 		var m IndexMap[int, string]
 		m.Init(size)
-		for i := 0; i < size; i++ {
+		for i := range size {
 			m.Put(keys[i], values[i])
 		}
 		b.ResetTimer()
@@ -46,7 +46,7 @@ func BenchmarkComparison(b *testing.B) {
 	b.Run("HeapArrayMap_Get", func(b *testing.B) {
 		var m HeapArrayMap[int, float64, string]
 		m.Reserve(size)
-		for i := 0; i < size; i++ {
+		for i := range size {
 			m.Push(keys[i], values[i], float64(i))
 		}
 		b.ResetTimer()
@@ -58,7 +58,7 @@ func BenchmarkComparison(b *testing.B) {
 	b.Run("HeapIndexMap_Get", func(b *testing.B) {
 		var m HeapIndexMap[int, float64, string]
 		m.Reserve(size)
-		for i := 0; i < size; i++ {
+		for i := range size {
 			m.Push(keys[i], values[i], float64(i))
 		}
 		b.ResetTimer()

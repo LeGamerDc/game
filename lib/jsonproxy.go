@@ -16,7 +16,7 @@ type (
 	}
 
 	mm struct {
-		m map[int32]interface{}
+		m map[int32]any
 	}
 
 	proxyManager struct {
@@ -28,23 +28,21 @@ var _manager = proxyManager{mms: make(map[reflect.Type]*mm)}
 
 func RegisterProxy[T id](p T) {
 	var (
-		zero [0]T
-		tp   = reflect.TypeOf(zero).Elem()
+		tp = reflect.TypeFor[[0]T]().Elem()
 	)
 
 	if m, ok := _manager.mms[tp]; ok {
 		m.m[p.Id()] = p
 		return
 	}
-	_manager.mms[tp] = &mm{m: map[int32]interface{}{
+	_manager.mms[tp] = &mm{m: map[int32]any{
 		p.Id(): p,
 	}}
 }
 
 func LookupPtr[T any](id int32) (p T) {
 	var (
-		zero [0]T
-		tp   = reflect.TypeOf(zero).Elem()
+		tp = reflect.TypeFor[[0]T]().Elem()
 	)
 	if m, ok := _manager.mms[tp]; ok {
 		p = m.m[id].(T)

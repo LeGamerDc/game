@@ -46,7 +46,7 @@ func TestTimerWheelClampDelayToLastSlot(t *testing.T) {
 	tw.set(0, 1, "far", 10)
 	tw.merge()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if got := tw.get(1); len(got) != 0 {
 			t.Fatalf("tick %d block 1 timers = %v, want empty before last slot", i, got)
 		}

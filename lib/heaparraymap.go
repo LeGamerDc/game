@@ -172,7 +172,7 @@ func (m *HeapArrayMap[K, S, V]) check() bool {
 	if len(m.nk) != n || len(m.nv) != n || len(m.np) != n {
 		return false
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if m.h[m.np[i]].i != i {
 			return false
 		}

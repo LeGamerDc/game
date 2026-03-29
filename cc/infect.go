@@ -33,8 +33,8 @@ func (n *Node) varType(m map[string]exprType) error {
 	if et, e = _string2type(n.Token[:idx]); e != nil {
 		return fmt.Errorf(fmtWrongVarType, n.Token)
 	}
-	vs := strings.Split(n.Token[idx+1:], ",")
-	for _, v := range vs {
+	vs := strings.SplitSeq(n.Token[idx+1:], ",")
+	for v := range vs {
 		m[v] = et
 	}
 	return nil

@@ -66,4 +66,8 @@ type (
 		Think(*ThinkCtx[W, S, E], Inbox[S]) int64
 		Apply(*CommitCtx[W, S], Arrangement[E])
 	}
+
+	LogicProvider[L any] interface {
+		GetLogic(uint64) (L, bool)
+	}
 )
