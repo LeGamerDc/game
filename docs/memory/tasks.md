@@ -6,7 +6,7 @@ Last Updated: 2026-03-30
 
 - [ ] 修复 Ref 空间歧义：`IsSerialRef(RefWorld) == true` 导致三类 ref 不互斥；补充 `RefNone` 常量和 `IsValidRef` 判断
 - [ ] 解决 Publish 不区分 Entity/World Effect：考虑拆分为两个函数或在 `EffectI` 上增加 `TargetDomain` 方法做运行时校验
-- [ ] 实现串行模式（cascade depth）及 processTick 模式路由：frontier < ThinkConcurrencyThreshold 时切换到串行路径，串行 cascade depth 预算 = MaxSupersteps - 已完成并发轮次
+- [ ] 更新 `docs/design/scheduler.md` 串行模式伪代码：当前伪代码描述 collect-then-cascade，需改写为 truly inline 设计以匹配代码实现
 
 ## Backlog
 
@@ -24,19 +24,14 @@ Last Updated: 2026-03-30
 
 ## Done
 
+- [x] 实现串行模式（scheduler_serial.go）及 ProcessTick 模式路由：truly inline 执行（thinkSignal/thinkTimer/applyOne 递归闭包）、栈变量 depth 追踪、countWork 替代 hasWork、parallel→serial 单向切换、blockToThread timer 一致性、14 个 serial 测试 + 21 个 parallel 测试全部通过含 race detector (2026-03-30)
 - [x] Scheduler review 修复：sort-based 分组替代 map 分组（消除 signalGroupBufs/groupBufs 的无限膨胀），新增 refValInbox/refValArrangement 适配器和 collectBuf（CacheLinePad 隔离），26 个测试通过含 race detector (2026-03-30)
-
-- [x] Scheduler 重构：getLogic 注入 + 双缓冲 signal collectors + 去除 per-logic 去重。消除 threadInboxes/threadFrontiers/pendingInbox/routeSignals/buildInitialFrontier/deferRemainingInboxes，改为 signalRead/signalWrite 双缓冲 swap + clear，溢出信号自动保留在 signalRead 延迟到下一 tick。Logic 查找改为外部注入 getLogic func(uint64)(L,bool)。Scheduler 不再保证同一 logic 在同一 superstep 只 Think 一次 (2026-03-29)
-- [x] Scheduler 并行 tick 实现：ProcessTick superstep 循环、Think/Apply 并行、LPT 负载均衡、signal routing、timer wheel 集成、per-thread inbox 隔离、溢出延迟，19 个测试通过含 race detector (2026-03-29)
-- [x] timerWheel 重构：Unified Log + Epoch-based Lazy Clear，merge O(registrations)、advance O(threads) (2026-03-29)
-- [x] WorldView 增加 `Round()` 只读观测接口，用于 tracing/调试时标记 superstep 轮次 (2026-03-28)
-- [x] Scheduler 数据结构实现：在 `en/schedule.go` 落地 serial/parallel runner、block-based effect 聚合、worker-local timerRegs、timer wheel、ready/inbox/frontier 管理，并补充 `en/schedule_test.go` (2026-03-28)
-- [x] 明确 timer wheel 语义：不支持移除 wheel 中旧 timer；局部 cancel 仅作用于本 tick 未 merge 的 thread-local 注册；超长 delay 需要 clamp 到最远 slot (2026-03-29)
-- [x] 优化 timer wheel 的 merge/advance：在 `newTimerWheel` 传入 thread 对应的 block 列表；每个 thread 的本地 collector 按全量 block 预分配 slot，set 直接使用全局 blockId，merge/advance 只遍历 thread 负责的 block (2026-03-29)
-- [x] 为 `en/wheel.go` 补充 `wheel_test.go`，覆盖全局 blockId 写入、delay clamp、pre/post-merge cancel、advance 清理与同槽去重，并通过 `go test ./en` (2026-03-29)
-- [x] Scheduler 并发模型设计：完成并发/串行双模式、block-based effect 收集、per-worker timer 注册、cascade depth、模式切换等设计，产出 `docs/design/scheduler.md` (2026-03-28)
+- [x] Scheduler 重构：getLogic 注入 + 双缓冲 signal collectors + 去除 per-logic 去重 (2026-03-29)
+- [x] Scheduler 并行 tick 实现：ProcessTick superstep 循环、Think/Apply 并行、LPT 负载均衡、signal routing、timer wheel 集成 (2026-03-29)
+- [x] timerWheel 重构：Unified Log + Epoch-based Lazy Clear (2026-03-29)
+- [x] WorldView 增加 `Round()` 只读观测接口 (2026-03-28)
+- [x] Scheduler 数据结构实现 + scheduler_test.go (2026-03-28)
+- [x] Scheduler 并发模型设计：产出 `docs/design/scheduler.md` (2026-03-28)
 - [x] 完成 `parallel.md` + `world.go` 的深度接口审计，产出 10 类问题 (2025-07-27)
-- [x] 逐条讨论审计结果，区分"真问题 / 推迟 / 不改"，达成共识 (2025-07-27)
-- [x] 在 `AGENTS.md` 补充项目结构、docs 规则、总结流程和 memory 维护约定 (2025-03-27)
-- [x] 初始化 `docs/memory/memory.md` 和 `docs/memory/todo.md` (2025-03-27)
-- [x] 重构 memory 目录结构：memory.md 移入 memory/，todo 拆分为 tasks.md + todo.md，AGENTS.md 增加读取规则 (2026-03-28)
+- [x] 逐条讨论审计结果，区分"真问题 / 推迟 / 不改" (2025-07-27)
+- [x] 初始化协作记忆和 AGENTS.md (2025-03-27)

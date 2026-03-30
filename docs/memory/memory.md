@@ -4,157 +4,139 @@ Last Updated: 2026-03-30
 
 ## Current Focus
 
-- `en/scheduler.go` 并行 tick 调度器已完成 review 反馈修复：sort-based 分组替代 map-based 分组、collectBuf CacheLinePad 隔离。
-- 下一步：实现串行模式（cascade depth）、processTick 的模式路由（frontier < ThinkConcurrencyThreshold 时切换到串行）。
-- 仍有两个已确认的接口问题待修复（Ref 空间歧义、Publish 不区分 Entity/World Effect）。
+- `scheduler_serial.go` 串行模式已完成实现并通过全部测试（含 race detector）。
+- `ProcessTick` 已支持 parallel/serial 自动模式路由：每轮 superstep 根据 `countWork` vs `ThinkConcurrencyThreshold` 选择模式。
+- 下一步：修复两个已确认的接口问题（Ref 空间歧义、Publish 不区分 Entity/World Effect）。
 
 ## Latest State
 
 - `en/world.go` 是当前引擎接口讨论的权威入口。
 - `WorldView` 目前已包含 `Now()/Version()/Round()` 三个只读观测接口。
-- `en/scheduler.go` 已完成重构 + review 修复，核心设计：
-  - **getLogic 注入**：`NewScheduler` 接受 `getLogic func(uint64)(L,bool)` 参数，由外部（如 WorldView 实现）负责 logic 生命周期管理。Scheduler 不再内部维护 logic 注册表。
-  - **双缓冲 Signal Collectors**：`signalRead`（消费）+ `signalWrite`（产出），superstep 结束 swap + clear。Think/Apply 共用 signalWrite（barrier 保证时序安全）。溢出信号自动保留在 signalRead 中延迟到下一 tick。
-  - **无 per-logic 去重**：Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。去除了 threadInboxes/threadFrontiers/pendingInbox/routeSignals/buildInitialFrontier/deferRemainingInboxes。Logic 自身处理重复激活。
-  - **外部输入**：`Emit()` 追加到 `pending` slice，`injectPending` 在 tick 开始时注入 `signalRead[0]`。
-  - **ProcessTick 生命周期**：injectPending → superstep 循环（parallelThink → computeApplyAssignment → parallelApply → swapSignalBuffers → resetEffectCollectors）→ merge/advance timer wheel
-  - Think 阶段按 block 稳定分配到 thread（`blockId % Concurrency`，初始化时固定）
-  - Apply 阶段使用 LPT（Longest Processing Time first）近似算法按 effect 数量动态分配 block
-  - Timer wheel 集成：Think 产出的 delay → thread-local set → tick 结束 merge + advance
-  - **Sort-based 分组**（替代旧的 map-based 分组）：Think/Apply worker 收集当前 block 的 signal/effect 到 per-thread flat buffer（`collectBuf`），按 ref 排序后线性扫描分组。消除了 `signalGroupBufs`/`groupBufs` 两个 `map[uint64][]` 字段，解决了 map key 跨 block 无限膨胀问题。
-  - **CacheLinePad 隔离规则**：所有 per-thread 并发写入的数据结构（`blockCollector`、`timerCollector`、`collectBuf`）头部均有 `cpu.CacheLinePad`，不假定 cache line = 64（ARM 等平台可达 128）。
-  - `refValInbox`/`refValArrangement` 适配器：让排序后的 `[]refVal` 子切片直接实现 `Inbox[S]`/`Arrangement[E]` 接口，零拷贝传给 Think/Apply。
-- `en/scheduler_test.go` 包含测试覆盖全部核心路径，含 race detector 通过。
-- `en/wheel.go` 已完成 Unified Log + Epoch-based Lazy Clear 重构。
-- `en/block_collector.go` 提供 per-thread block-sharded collector（头部 CacheLinePad），被 scheduler 用于 `refVal[E]` 和 `refVal[S]` 收集。
-- `docs/design/parallel.md` 是 parallel tick 设计意图的主文档。
-- `docs/design/scheduler.md` 是 Scheduler 并发调度模型设计文档。
+- `en/scheduler.go` 核心调度器，包含 `ProcessTick`（双模式路由）、`countWork`、`injectPending`、`swapSignalBuffers`、`resetEffectCollectors`。
+- `en/scheduler_parallel.go` 并行路径：`parallelThink`/`parallelApply`/`thinkWorker`/`applyWorker` + `emitClosure`/`publishClosure`。
+- `en/scheduler_serial.go` 串行路径：`serialProcess` 通过三个递归闭包（`thinkSignal`/`thinkTimer`/`applyOne`）实现 truly inline 执行。
+- `en/scheduler_test.go` 共 35 个测试（21 个 parallel + 14 个 serial），全部通过含 race detector。
+
+### Scheduler 核心设计
+
+- **getLogic 注入**：`NewScheduler` 接受 W（同时实现 `WorldView` + `LogicProvider[L]`），由外部负责 logic 生命周期管理。
+- **双缓冲 Signal Collectors**：`signalRead`（消费）+ `signalWrite`（产出），superstep/serial 结束后 swap + clear。
+- **无 per-logic 去重**：Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。Logic 自身处理重复激活。
+- **外部输入**：`Emit()` → `pending` → `injectPending` 注入 `signalRead[0]`。
+- **Sort-based 分组**（parallel only）：per-thread `collectBuf` flat buffer + sort by ref + 线性分组。
+- **CacheLinePad 隔离**（parallel only）：`blockCollector`、`timerCollector`、`collectBuf` 头部 pad。
+
+### ProcessTick 生命周期
+
+```
+injectPending → superstep 循环 {
+  countWork(includeTimers) → workCount
+  workCount == 0 → break
+  workCount >= ThinkConcurrencyThreshold → parallel path:
+    parallelThink → computeApplyAssignment → parallelApply → swap → reset
+  workCount < ThinkConcurrencyThreshold → serial path:
+    serialProcess(includeTimers, maxDepth=MaxSupersteps-round) → swap → break
+} → merge timer wheel → advance timer wheel
+```
+
+### Serial 模式设计
+
+- **Truly inline 执行**：`Publish`/`Emit` 闭包立即调用目标 logic 的 Apply/Think，不经过任何中间缓冲。
+- **三个递归闭包**：
+  - `thinkSignal(ref, sig)`：depth check → GetLogic → depth++ → Think(单信号 Inbox) → depth-- → timer set
+  - `thinkTimer(ref)`：GetLogic → depth++ → Think(空 Inbox) → depth-- → timer set
+  - `applyOne(ref, eff)`：GetLogic → Apply(单 effect Arrangement)，不增加 depth
+- **Depth 追踪**：栈变量 `depth` 通过 inc/dec 自然匹配递归调用栈。不嵌入 refVal，不影响 parallel 路径的 cache 效率。
+- **Depth 语义**：Think→Publish→Apply 是同一 depth 层级的原子操作；只有经过 Think 时 depth+1。
+- **溢出处理**：`depth >= maxDepth` 时信号写入 `signalWrite[0]`（serial 不读 signalWrite），`ProcessTick` 结束时 swap 保留到下一 tick。
+- **Timer 注册**：使用 `blockToThread[blockId]` 映射写入正确的 thread-local log，与 parallel 模式的 last-write-wins 语义一致。
+- **零重量级基础设施**：不使用 blockCollector、不排序、不分组、不创建 goroutine。开销仅为递归函数调用 + 闭包创建（一次性）。
+- **ThinkCtx/CommitCtx 复用**：创建一次，闭包捕获 depth 引用，跨所有递归调用复用。
+
+### 模式切换
+
+- `countWork` 替代了原 `hasWork`，返回 work item 总数（signal + timer），达到 threshold 时 early exit。
+- 每轮 superstep 独立判断模式；串行是终态（break），不可回到并行。
+- 串行 depth 预算 = `MaxSupersteps - 已完成并发轮次`。
+
+### Timer Wheel
+
+- 单层环形数组，大小 200。
+- Unified Log + Epoch-based Lazy Clear。
+- merge() O(actual_registrations)，advance() O(threads)。
+- Serial 模式通过 `blockToThread` 映射使用正确的 thread-local log，保证与 parallel 模式的覆盖语义一致。
 
 ## Confirmed Decisions
 
 ### 协作流程
 
-- 协作记忆统一在 `docs/memory/` 目录下，包含三个文件：
-  - `memory.md`：稳定上下文和当前状态
-  - `tasks.md`：项目级任务注册表
-  - `todo.md`：当前活跃任务的执行清单
+- 协作记忆统一在 `docs/memory/` 目录下，包含三个文件：`memory.md`、`tasks.md`、`todo.md`。
 
 ### Parallel Tick 接口审计结论
 
-以下结论来自对 `en/world.go` 与 `docs/design/parallel.md` 的深度审计及逐条讨论。
-
 **需要修复的接口问题：**
 
-1. **Ref 空间歧义**：`IsSerialRef(RefWorld) == true`，三类 ref（Normal / World / Serial）不互斥。缺少 `RefNone` 和 `IsValidRef`。需要明确互斥分区。
-2. **Publish 不区分 Entity/World Effect**：`ThinkCtx.Publish` 用同一函数 + 同一类型参数覆盖 entity effect 和 world effect 两种语义，无编译期安全。需要拆分或加 domain 标记。
+1. **Ref 空间歧义**：`IsSerialRef(RefWorld) == true`，三类 ref 不互斥。需要明确互斥分区。
+2. **Publish 不区分 Entity/World Effect**：需要拆分或加 domain 标记。
 
-**确认不改的设计点：**
+**确认不改的设计点（3-10）**：WorldView 极简、Signal/Effect source ref 用户管理、代数模型推迟、Budget/Meta 不进 Logic 接口、Apply→Emit 合法、Timer 冲突 Logic 处理、Think 激活类型不分类、Ack 内嵌 Think/private state。
 
-3. WorldView 保持极简。
-4. Signal/Effect 的 source ref 是用户的事。
-5. 代数模型推迟。
-6. Budget/Meta 不进 Logic 接口。
-7. Apply→Emit 自激活是合法场景。
-8. Timer 冲突由 Logic 内部处理。
-9. Think 激活类型不需要框架层分类。
-10. Ack 内嵌在 Think / private state 中。
+### Serial 模式设计决策
+
+- **Truly inline**（非 collect-then-cascade）：Publish/Emit 原地触发 Apply/Think，不做 Think 输出的中间收集。
+- **Apply 粒度差异已确认接受**：serial 模式下 Apply 每次收到单个 effect（vs parallel 模式的批量 Arrangement）。这是 truly inline 的自然结果，用户确认可接受。
+- **设计文档伪代码已过时**：`scheduler.md` 中的串行伪代码（collect-then-cascade）未经审查，以代码为准。
+- **Logic 接口不变**：`thinkSignal`/`thinkTimer`/`applyOne` 是 scheduler 内部闭包，不改 Logic interface。Serial/parallel 对 Logic 实现完全透明。
+- **Depth 用栈变量追踪**：不嵌入 signal/effect 值，避免膨胀 parallel 路径的 refVal 结构体。
 
 ### Logic 查找
 
-- `getLogic func(uint64)(L,bool)` 由外部注入，Scheduler 不在内部维护 logic 注册表。
-- 原因：`WorldView.GetLogic` 因 Go 泛型类型不变性（type invariance）无法表达返回匹配类型参数的 Logic。循环类型依赖（WorldView → Logic[W,S,E] → WorldView）和只读语义冲突也无法解决。
-- 调用方须保证 getLogic 在并发调用时安全（通常是底层 map 在 tick 内无写即可）。
+- `getLogic` 由外部注入（通过 W 的 `LogicProvider[L]` 接口），Scheduler 不维护 logic 注册表。
 
 ### 去重
 
-- Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。Logic 自身处理重复激活。
-- 消除了 `threadInboxes`/`threadFrontiers`/`pendingInbox`/`routeSignals`/`buildInitialFrontier`/`deferRemainingInboxes`，大幅简化调度器内部状态。
+- Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。
 
 ### 双缓冲 Signal Collectors
 
-- `signalRead`（消费）+ `signalWrite`（产出），superstep 结束 swap + clear。
-- Think/Apply 共用 signalWrite（barrier 保证时序安全：Think → barrier → Apply → barrier → swap）。
-- 溢出信号自动保留在 signalRead 中延迟到下一 tick（injectPending 不清空 signalRead）。
-- 外部输入通过 `Emit()` → `pending` → `injectPending` 注入 `signalRead[0]`。
+- signalRead/signalWrite swap + clear。Think/Apply 共用 signalWrite（barrier 保证时序安全，或 serial 模式下不使用 signalWrite 除溢出）。
 
 ### Scheduler 并发模型
 
-**并发控制**：
-- Think 阈值 500 开启并发，并发 worker 数 5，每 tick 最多 3 轮 superstep。
-- 参数统一放入 `ScheduleMeta` 结构体，零值字段在 NewScheduler 中补齐默认值。
-
-**Block-based Effect 收集**：
-- 按 `hash(targetRef) % BlockSize` 分块，collector 存储 `refVal[E]{ref, val}` 保留 targetRef。
-- Apply 阶段按 blockId 分配 worker，跨所有 Think worker 读取对应 block，按 targetRef 聚合后 Apply。
-- 聚合使用 per-thread `collectBuf[refVal[E]]` flat buffer，按 ref 排序后线性分组。每个 block 处理前截断到 0，跨 block 复用 capacity。
-
-**Sort-based 分组（替代 map-based 分组）**：
-- 旧方案：per-thread `map[uint64][]S/E`，截断 value slice 到 0 保留 capacity → map key 跨 block 无限膨胀，range 遍历大量空条目。
-- 新方案：per-thread `collectBuf[refVal[S/E]]` flat buffer + `slices.SortFunc` 按 ref 排序 + 线性分组。每个 block 处理前 `flatBuf[:0]`，无跨 block 状态泄漏。
-- `refValInbox[S]`/`refValArrangement[E]` 适配器：将 `[]refVal` 子切片零拷贝适配为 `Inbox[S]`/`Arrangement[E]` 接口。
-- 排序开销：O(n log n)，n 为单 block 粒度（通常个位到两位数），Go 的 pattern-defeating quicksort 对小 n 退化为 insertion sort。
-
-**CacheLinePad 隔离规则**：
-- 不假定 cache line = 64（ARM 等平台 cache line 可达 128），统一使用 `cpu.CacheLinePad`。
-- 所有 per-thread 并发写入的结构体（`blockCollector`、`timerCollector`、`collectBuf`）头部添加 `cpu.CacheLinePad`。
-- 只需头部 pad：下一个元素的头部 pad 自然提供尾部隔离，且 pad 本身不被程序访问。
-
-**Block→Thread 映射**：
-- Think 阶段：`blockId % Concurrency → threadId`，初始化时固定，跨 superstep/tick 一致。
-- Apply 阶段：LPT（Longest Processing Time first）近似算法按 effect 数量动态分配 block。
-
-**串行模式（设计已确认，代码待实现）**：
-- 无 superstep 概念，无 frontier push。
-- 深度优先递归，cascade depth 控制递归深度。
-- 串行 cascade depth 预算 = `MaxSupersteps - 已完成并发轮次`。
-- 通过 ThinkCtx/CommitCtx 闭包实现差异，Logic 接口层完全兼容。
-
-**模式切换（设计已确认，代码待实现）**：
-- 每轮 superstep 独立判断，frontier 缩小到阈值以下可切换到串行模式。
-
-**World Effect**：
-- RefWorld 按 `hash(RefWorld) % BlockSize` 落入某个 block，作为普通 target 参与 Apply。
-
-### Timer Wheel
-
-- 单层环形数组，大小 200。
-- Unified Log + Epoch-based Lazy Clear 已完成重构。
-- merge() O(actual_registrations)，advance() O(threads)。
-- `delay > TimerWheelSize` clamp 到最远 slot。
-- `delay <= 0` 仅取消 thread-local 未 merge 的登记。
-- 接口签名和语义不变，6 个测试通过。
-
-### Scheduler 当前实现约束
-
-- Scheduler 以 `Logic.ID()` 作为 owner/ref 权威索引。
-- `Scheduler.Emit` / pending 承担外部输入注入。溢出信号通过 signalRead 自动延迟到下一 tick。
-- 非法 target ref / 未注册 logic 的 signal/effect 被静默丢弃。
+- Think 阈值 500、并发 worker 5、最多 3 轮 superstep。参数统一放入 `ScheduleMeta`。
+- Block-based effect 收集，sort-based 分组替代 map。
+- CacheLinePad 隔离规则。
+- Think 阶段 `blockId % Concurrency → threadId`（稳定映射）。
+- Apply 阶段 LPT 动态分配。
+- World Effect 按 `hash(RefWorld) % BlockSize` 落入某个 block。
 
 ## Open Questions
 
-- Logic 生命周期方法（Init/Dispose）是否需要加入接口——尚未讨论。
-- LogicMeta 如何暴露给调度器——设计文档有描述，接口未体现，尚未讨论。
-- ThinkCtx 函数引用可被 Logic 逃逸存储——Go 语言限制，无法在接口层解决，只能靠规范和 review。
-- `engine.go` 中现有 GAS 模式与新并行模型的迁移隔离策略——尚未讨论。
+- Logic 生命周期方法（Init/Dispose）是否需要加入接口。
+- LogicMeta 如何暴露给调度器。
+- ThinkCtx 函数引用可被 Logic 逃逸存储——Go 限制，只能靠规范。
+- `engine.go` 中现有 GAS 模式与新并行模型的迁移隔离策略。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
 - Think 返回 delay 的时间基准：相对当前 tick 的偏移量？
 - Block 粒度（137）是否适合所有负载模式。
-- 串行模式下同一 logic 被多条因果链触发时的 depth 处理策略。
-- `TickStats` 是否需要进一步扩展为 tracing/debug API。
-- 当前 world effect 复用 `Logic` 接口是否足够清晰，还是应单独抽出 world reducer 接口。
-- Worker pool 替代每 superstep 创建 goroutine（TODO 已标注在代码中）。
-- `docs/design/feedback.md` 应并入主设计文档还是保留为评审记录。
-- hasWork 当前 O(C×B) 扫描——代价极低（685 次 len 检查），暂不优化。若后续需要，可在 blockCollector 加 total 计数器降为 O(C)。
+- `TickStats` 是否需要扩展为 tracing/debug API。
+- World effect 复用 `Logic` 接口是否足够清晰。
+- Worker pool 替代每 superstep 创建 goroutine（TODO 已标注）。
+- `docs/design/feedback.md` 应并入主设计文档还是保留。
+- `docs/design/scheduler.md` 串行伪代码需要更新以反映 truly inline 设计。
 
 ## Relevant Files
 
 - `AGENTS.md`
 - `en/world.go`
 - `en/scheduler.go`
+- `en/scheduler_parallel.go`
+- `en/scheduler_serial.go`
 - `en/scheduler_test.go`
 - `en/wheel.go`
 - `en/wheel_test.go`
 - `en/block_collector.go`
+- `en/utils.go`
 - `en/engine_bak.go`
 - `docs/design/parallel.md`
 - `docs/design/scheduler.md`
@@ -164,14 +146,9 @@ Last Updated: 2026-03-30
 
 ## Should
 
-- 对任何算法议题（如 timer wheel、effect/signal 收集器、数据结构选型），可以创建 subagent 单独调研解决，不需要在主对话中展开所有细节。
+- 对任何算法议题可以创建 subagent 单独调研解决。
+- 设计稿与代码出现矛盾时，以代码为准。
 
 ## Dont's
 
-- （暂无，待用户补充）
-
-## Maintenance Notes
-
-- 这里保存稳定上下文和当前状态，不保存完整聊天转录。
-- 项目级任务追踪放在 `docs/memory/tasks.md`。
-- 当前任务执行清单放在 `docs/memory/todo.md`。
+- 不要在 refVal 中嵌入 serial-only 的字段（如 depth），避免影响 parallel cache 效率。

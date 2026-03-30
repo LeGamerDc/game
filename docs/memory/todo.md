@@ -1,29 +1,26 @@
 # Todo — 当前任务执行清单
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
-当前任务：Scheduler Review 反馈修复
+当前无活跃任务。
 
-- [x] 分析 hasWork O(C×B) 扫描问题 → 确认 signalRead 按 source thread 索引，非消费端索引；用户确认不需要优化
-- [x] 分析 buf 无限膨胀问题（signalGroupBufs/groupBufs map 跨 block 泄漏僵尸 key）
-- [x] 设计 sort-based flat buffer 分组方案替代 map 分组
-- [x] 实现 `refValInbox[S]` / `refValArrangement[E]` 适配器类型
-- [x] 实现 `collectBuf[V]` wrapper（头部 CacheLinePad 隔离）
-- [x] 重写 `thinkWorker`：flat buffer 收集 → sort by ref → 线性分组调用 Think
-- [x] 重写 `applyWorker`：flat buffer 收集 → sort by ref → 线性分组调用 Apply
-- [x] 替换 Scheduler 字段：`signalGroupBufs`/`groupBufs` → `thinkCollectBuf`/`applyCollectBuf`
-- [x] 更新 NewScheduler 初始化
-- [x] 编译通过 + 26 个测试全部通过（含 race detector）
-- [ ] 更新 memory.md 反映新的设计决策
+## 已完成任务：Serial 模式实现
+
+- [x] 设计 serial 模式执行策略：truly inline（Publish/Emit 立即递归调用）vs collect-then-cascade → 确认 truly inline
+- [x] 确认 depth 追踪方案：栈变量 inc/dec，不嵌入 refVal
+- [x] 确认 Apply 粒度差异可接受：serial 单 effect vs parallel 批量 Arrangement
+- [x] 确认 thinkSignal/thinkTimer/applyOne 为 scheduler 内部闭包，Logic interface 不变
+- [x] 实现 `countWork` 替代 `hasWork`（返回 int，early exit at threshold）
+- [x] 重写 `ProcessTick` 支持 parallel/serial 模式路由
+- [x] 实现 `scheduler_serial.go`：`serialProcess` + 三个递归闭包
+- [x] Timer 注册使用 `blockToThread` 映射保证与 parallel 模式一致
+- [x] 溢出信号写入 `signalWrite[0]`，ProcessTick 结束时 swap 保留
+- [x] 编写 14 个 serial 测试：基础信号、inline 执行顺序、信号级联、depth 限制、Apply→Emit 级联、timer 激活、timer 重注册、自发 effect、未注册 target、defer 到下 tick、自发 signal、空 tick、parallel→serial 切换、depth 预算共享
+- [x] 全部 35 个测试通过（含 race detector）
+- [x] 更新 memory.md 和 tasks.md
 
 ## Notes
 
-- **hasWork 不优化**：用户确认 signalRead 按 source thread 索引的分布特征使得优化不必要。O(C×B)=O(685) 在实践中开销可忽略。
-- **sort 替代 map 的核心洞察**：map 天然在 key 维度上泄漏状态，而 block 级别的分组是独立的、不应跨 block 积累。sort-based flat buffer 天然尊重 block 独立性——`flatBuf[:0]` 完全重置，无僵尸条目。
-- **cache line 策略**：不假定 cache line = 64 bytes（ARM 等平台已是 128）。识别 thread list 结构，统一用头部 `cpu.CacheLinePad` 隔离，不加尾部 pad。
-- **已有 CacheLinePad 的 thread list 结构**：`blockCollector`、`timerCollector`、`collectBuf`（新增）。
-
-## 下一步
-
-- 更新 memory.md
-- 继续 tasks.md 中的其他 Active 任务
+- **truly inline 关键设计点**：Publish 立即触发 Apply（不等 Think 结束），Emit 立即触发 Think（递归）。Apply 不增加 depth，只有 Think 增加 depth。
+- **countWork early exit**：达到 ThinkConcurrencyThreshold 后立即返回，不再精确计数——超过阈值后走 parallel 路径，精确数值无意义。
+- **serial timer 一致性**：使用 `sc.blockToThread[blockId]` 而非固定 thread 0，保证同一 logic 的 timer 始终在同一 thread-local log 中覆盖写，避免与 parallel 轮次的注册冲突。

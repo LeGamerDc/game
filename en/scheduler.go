@@ -213,15 +213,21 @@ func (sc *Scheduler[W, S, E, L]) Emit(ref uint64, signal S) {
 // ProcessTick — 并行 tick 主入口
 // ────────────────────────────────────────────────────────────────────────────
 
-// ProcessTick 执行一个完整的并行 tick。
+// ProcessTick 执行一个完整的 tick，自动选择并行或串行模式。
+//
+// 模式选择：
+//   - 每轮 superstep 开始前统计待处理工作量（signal + timer 条目总数）
+//   - workCount >= ThinkConcurrencyThreshold → 并行模式（superstep 循环）
+//   - workCount <  ThinkConcurrencyThreshold → 串行模式（递归 inline）
+//   - 串行模式是终态：一旦进入，不可能再回到并行模式
 //
 // 生命周期：
 //  1. 注入外部输入到 signalRead
-//  2. superstep 循环：Think→Apply→swap，直到无工作或超预算
+//  2. superstep 循环：每轮判断模式
+//     - 并行：parallelThink → computeApplyAssignment → parallelApply → swap → reset
+//     - 串行：serialProcess（递归 inline）→ swap → break
 //  3. tick 结束：合并 timer 注册 → 推进 timer wheel
-//  4. 溢出处理：signalRead 中的残余信号自动保留到下一 tick（无需额外操作）
-//
-// 当前仅实现并行路径。串行模式将在后续版本中实现。
+//  4. 溢出处理：signalRead 中的残余信号自动保留到下一 tick
 func (sc *Scheduler[W, S, E, L]) ProcessTick(world W) {
 	// Phase 0: 注入外部输入
 	sc.injectPending()
@@ -229,32 +235,39 @@ func (sc *Scheduler[W, S, E, L]) ProcessTick(world W) {
 	// Superstep 循环
 	firstSuperstep := true
 	for round := range sc.meta.MaxSupersteps {
-		_ = round
-		if !sc.hasWork(firstSuperstep) {
+		workCount := sc.countWork(firstSuperstep)
+		if workCount == 0 {
 			break
 		}
 
-		// ── Think Phase（并行）────────────────────────────────────────
-		// 每个 thread 遍历其 block：
-		//   - 首轮 superstep：消费 timer 到期 + signalRead
-		//   - 后续 superstep：仅消费 signalRead（上轮 swap 后的 signalWrite）
-		// 产出写入 effectCollectors + signalWrite
-		sc.parallelThink(world, firstSuperstep)
-		firstSuperstep = false
+		if workCount >= sc.meta.ThinkConcurrencyThreshold {
+			// ── Parallel path ────────────────────────────────────────
+			sc.parallelThink(world, firstSuperstep)
+			firstSuperstep = false
 
-		// ── Apply Phase（并行，LPT 动态负载均衡）─────────────────────
-		sc.computeApplyAssignment()
-		sc.parallelApply(world)
+			sc.computeApplyAssignment()
+			sc.parallelApply(world)
 
-		// ── Swap 信号缓冲 ────────────────────────────────────────────
-		// signalRead ← signalWrite（下一轮 Think 的输入）
-		// signalWrite ← old signalRead（清空后作为下一轮的输出缓冲）
-		sc.swapSignalBuffers()
+			// signalRead ← signalWrite（下一轮 Think 的输入）
+			// signalWrite ← old signalRead（清空后作为下一轮的输出缓冲）
+			sc.swapSignalBuffers()
 
-		// ── 清空 effect collectors ───────────────────────────────────
-		// effect 只在 Think 中产出、Apply 中消费，superstep 结束后即可清空。
-		// timer wheel 的 thread-local log 不清空：跨 superstep 累积，tick 结束统一 merge。
-		sc.resetEffectCollectors()
+			// effect 只在 Think 中产出、Apply 中消费，superstep 结束后即可清空。
+			// timer wheel 的 thread-local log 不清空：跨 superstep 累积，tick 结束统一 merge。
+			sc.resetEffectCollectors()
+		} else {
+			// ── Serial path ──────────────────────────────────────────
+			// Serial mode processes inline: Think/Apply cascade via
+			// recursive closures, no intermediate buffering.
+			// Depth budget = remaining supersteps.
+			maxDepth := sc.meta.MaxSupersteps - round
+			sc.serialProcess(world, firstSuperstep, maxDepth)
+
+			// Deferred signals (depth overflow) were written to signalWrite.
+			// Swap to preserve them in signalRead for the next tick.
+			sc.swapSignalBuffers()
+			break // Serial is terminal; cannot transition back to parallel.
+		}
 	}
 
 	// ── Tick 结束 ─────────────────────────────────────────────────────
@@ -287,29 +300,38 @@ func (sc *Scheduler[W, S, E, L]) injectPending() {
 	sc.pending = sc.pending[:0]
 }
 
-// hasWork 检查当前 superstep 是否有工作需要执行。
+// countWork 统计当前 superstep 的待处理工作量（signal + timer 条目总数）。
 //
-//   - includeTimers=true（首轮 superstep）：检查 timer wheel + signalRead
-//   - includeTimers=false（后续 superstep）：仅检查 signalRead
-func (sc *Scheduler[W, S, E, L]) hasWork(includeTimers bool) bool {
-	// 检查 signalRead 是否有任何信号
+// 返回值用于两个判断：
+//   - == 0：无工作，终止 superstep 循环
+//   - >= ThinkConcurrencyThreshold：选择并行模式，否则串行模式
+//
+// 当计数达到 ThinkConcurrencyThreshold 时提前返回（early exit），
+// 因为超过阈值后精确计数对模式选择无意义。
+//
+//   - includeTimers=true（首轮 superstep）：统计 timer wheel + signalRead
+//   - includeTimers=false（后续 superstep）：仅统计 signalRead
+func (sc *Scheduler[W, S, E, L]) countWork(includeTimers bool) int {
+	count := 0
+	threshold := sc.meta.ThinkConcurrencyThreshold
 	bs := sc.meta.BlockSize
 	for _, c := range sc.signalRead {
 		for b := range bs {
-			if len(c.get(b)) > 0 {
-				return true
+			count += len(c.get(b))
+			if count >= threshold {
+				return count
 			}
 		}
 	}
-	// 检查 timer wheel 是否有到期条目（仅首轮）
 	if includeTimers {
 		for b := range bs {
-			if len(sc.timerWheel.get(b)) > 0 {
-				return true
+			count += len(sc.timerWheel.get(b))
+			if count >= threshold {
+				return count
 			}
 		}
 	}
-	return false
+	return count
 }
 
 // ────────────────────────────────────────────────────────────────────────────

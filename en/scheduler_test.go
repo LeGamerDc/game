@@ -959,3 +959,674 @@ func TestSchedulerDoubleBufferDefer(t *testing.T) {
 		t.Fatalf("tick 3: expected chain length 3, got %d", chainLen)
 	}
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Serial mode tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// serialMeta returns a ScheduleMeta that forces serial mode by setting
+// ThinkConcurrencyThreshold very high. All other parameters match defaultMeta.
+func serialMeta() ScheduleMeta {
+	return ScheduleMeta{
+		Concurrency:               3,
+		BlockSize:                 7,
+		MaxSupersteps:             3,
+		TimerWheelSize:            8,
+		ThinkConcurrencyThreshold: 10000, // force serial mode
+	}
+}
+
+// TestSchedulerSerialBasicSignal verifies that an external signal triggers
+// Think in serial mode.
+func TestSchedulerSerialBasicSignal(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	var receivedSignals []int
+	logic := &testLogic{
+		id: 42,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			for i := 0; i < inbox.Len(); i++ {
+				receivedSignals = append(receivedSignals, inbox.At(i).value)
+			}
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	sc.Emit(42, testSignal{value: 100})
+	sc.Emit(42, testSignal{value: 200})
+	sc.ProcessTick(world)
+
+	if logic.thinkHits.Load() < 1 {
+		t.Fatalf("expected at least 1 Think call, got %d", logic.thinkHits.Load())
+	}
+	// Both signals must have been delivered (possibly across separate Think calls)
+	sum := 0
+	for _, v := range receivedSignals {
+		sum += v
+	}
+	if sum != 300 {
+		t.Fatalf("signal sum = %d, want 300", sum)
+	}
+}
+
+// TestSchedulerSerialInlineExecution verifies that in serial mode,
+// Publish triggers Apply inline during Think execution, and Emit triggers
+// Think inline during Think/Apply execution. The execution order is
+// deterministic and depth-first.
+func TestSchedulerSerialInlineExecution(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	var order []string
+
+	logicA := &testLogic{
+		id: 1,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, "A.Think.start")
+			ctx.Publish(2, testEffect{value: 1})
+			order = append(order, "A.Think.afterPublish")
+			ctx.Emit(3, testSignal{value: 1})
+			order = append(order, "A.Think.afterEmit")
+			return 0
+		},
+	}
+	logicB := &testLogic{
+		id: 2,
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+			order = append(order, "B.Apply")
+		},
+	}
+	logicC := &testLogic{
+		id: 3,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, "C.Think")
+			return 0
+		},
+	}
+
+	world.addLogic(logicA)
+	world.addLogic(logicB)
+	world.addLogic(logicC)
+
+	sc.Emit(1, testSignal{value: 0})
+	sc.ProcessTick(world)
+
+	// Inline semantics: Publish/Emit take effect immediately during Think.
+	// Expected DFS order:
+	//   A.Think.start → B.Apply (inline Publish) → A.Think.afterPublish
+	//   → C.Think (inline Emit) → A.Think.afterEmit
+	expected := []string{
+		"A.Think.start",
+		"B.Apply",
+		"A.Think.afterPublish",
+		"C.Think",
+		"A.Think.afterEmit",
+	}
+
+	if len(order) != len(expected) {
+		t.Fatalf("order = %v, want %v", order, expected)
+	}
+	for i, v := range expected {
+		if order[i] != v {
+			t.Fatalf("order[%d] = %q, want %q (full: %v)", i, order[i], v, order)
+		}
+	}
+}
+
+// TestSchedulerSerialSignalCascade verifies multi-depth signal cascade in
+// serial mode: A→B→C, all processed within a single tick.
+func TestSchedulerSerialSignalCascade(t *testing.T) {
+	meta := serialMeta()
+	meta.MaxSupersteps = 5
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	var order []uint64
+
+	logicA := &testLogic{
+		id: 100,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, 100)
+			ctx.Emit(200, testSignal{value: 1})
+			return 0
+		},
+	}
+	logicB := &testLogic{
+		id: 200,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, 200)
+			ctx.Emit(300, testSignal{value: 2})
+			return 0
+		},
+	}
+	logicC := &testLogic{
+		id: 300,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, 300)
+			return 0
+		},
+	}
+
+	world.addLogic(logicA)
+	world.addLogic(logicB)
+	world.addLogic(logicC)
+
+	sc.Emit(100, testSignal{value: 0})
+	sc.ProcessTick(world)
+
+	// Serial DFS: A→B→C in strict order (inline Emit)
+	if len(order) != 3 {
+		t.Fatalf("order = %v, want [100, 200, 300]", order)
+	}
+	if order[0] != 100 || order[1] != 200 || order[2] != 300 {
+		t.Fatalf("order = %v, want [100, 200, 300]", order)
+	}
+}
+
+// TestSchedulerSerialDepthLimit verifies that cascading signals stop when
+// depth reaches maxDepth, and overflow signals are deferred to the next tick.
+func TestSchedulerSerialDepthLimit(t *testing.T) {
+	meta := serialMeta()
+	meta.MaxSupersteps = 2 // serial maxDepth = 2
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	var thinkOrder []uint64
+
+	// Chain: A→B→C. With maxDepth=2:
+	//   thinkSignal(A): depth=0 < 2 → depth++ → Think(A) at depth=1, emits to B
+	//     thinkSignal(B): depth=1 < 2 → depth++ → Think(B) at depth=2, emits to C
+	//       thinkSignal(C): depth=2 >= 2 → DEFERRED
+	//     depth-- → 1
+	//   depth-- → 0
+	logicA := &testLogic{
+		id: 1,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkOrder = append(thinkOrder, 1)
+			ctx.Emit(2, testSignal{value: 1})
+			return 0
+		},
+	}
+	logicB := &testLogic{
+		id: 2,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkOrder = append(thinkOrder, 2)
+			ctx.Emit(3, testSignal{value: 2})
+			return 0
+		},
+	}
+	logicC := &testLogic{
+		id: 3,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkOrder = append(thinkOrder, 3)
+			return 0
+		},
+	}
+
+	world.addLogic(logicA)
+	world.addLogic(logicB)
+	world.addLogic(logicC)
+
+	// Tick 1: A and B think, C is deferred
+	sc.Emit(1, testSignal{value: 0})
+	sc.ProcessTick(world)
+
+	if len(thinkOrder) != 2 {
+		t.Fatalf("tick 1: thinkOrder = %v, want [1, 2]", thinkOrder)
+	}
+	if thinkOrder[0] != 1 || thinkOrder[1] != 2 {
+		t.Fatalf("tick 1: thinkOrder = %v, want [1, 2]", thinkOrder)
+	}
+
+	// Tick 2: C processes the deferred signal
+	sc.ProcessTick(world)
+
+	if len(thinkOrder) != 3 {
+		t.Fatalf("tick 2: thinkOrder = %v, want [1, 2, 3]", thinkOrder)
+	}
+	if thinkOrder[2] != 3 {
+		t.Fatalf("tick 2: thinkOrder[2] = %d, want 3", thinkOrder[2])
+	}
+}
+
+// TestSchedulerSerialApplyEmitCascade verifies the full chain:
+// Think → Publish → Apply (inline) → Emit → Think (inline, depth+1).
+func TestSchedulerSerialApplyEmitCascade(t *testing.T) {
+	meta := serialMeta()
+	meta.MaxSupersteps = 5
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	var order []string
+
+	source := &testLogic{
+		id: 10,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, "source.Think")
+			ctx.Publish(20, testEffect{value: 42})
+			return 0
+		},
+	}
+	applier := &testLogic{
+		id: 20,
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+			order = append(order, "applier.Apply")
+			ctx.Emit(30, testSignal{value: 99})
+		},
+	}
+	reactor := &testLogic{
+		id: 30,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, "reactor.Think")
+			if inbox.Len() != 1 || inbox.At(0).value != 99 {
+				t.Errorf("reactor got inbox len=%d, want 1 with value 99", inbox.Len())
+			}
+			return 0
+		},
+	}
+
+	world.addLogic(source)
+	world.addLogic(applier)
+	world.addLogic(reactor)
+
+	sc.Emit(10, testSignal{value: 1})
+	sc.ProcessTick(world)
+
+	// Serial inline: source.Think → applier.Apply → reactor.Think
+	expected := []string{"source.Think", "applier.Apply", "reactor.Think"}
+	if len(order) != len(expected) {
+		t.Fatalf("order = %v, want %v", order, expected)
+	}
+	for i, v := range expected {
+		if order[i] != v {
+			t.Fatalf("order[%d] = %q, want %q (full: %v)", i, order[i], v, order)
+		}
+	}
+}
+
+// TestSchedulerSerialTimerActivation verifies that timers fire correctly
+// in serial mode.
+func TestSchedulerSerialTimerActivation(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	thinkCount := int64(0)
+	logic := &testLogic{
+		id: 10,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkCount++
+			if thinkCount == 1 {
+				return 2 // register timer with delay=2
+			}
+			if inbox.Len() != 0 {
+				t.Errorf("timer activation should have empty inbox, got %d", inbox.Len())
+			}
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	// Tick 1: external signal → Think, registers delay=2
+	sc.Emit(10, testSignal{value: 1})
+	sc.ProcessTick(world)
+	if thinkCount != 1 {
+		t.Fatalf("tick 1: expected 1 Think, got %d", thinkCount)
+	}
+
+	// Tick 2: timer not yet expired
+	sc.ProcessTick(world)
+	if thinkCount != 1 {
+		t.Fatalf("tick 2: timer should not fire yet, Think count = %d", thinkCount)
+	}
+
+	// Tick 3: timer expires
+	sc.ProcessTick(world)
+	if thinkCount != 2 {
+		t.Fatalf("tick 3: timer should fire, Think count = %d", thinkCount)
+	}
+}
+
+// TestSchedulerSerialSelfEffect verifies that a logic can publish an effect
+// to itself in serial mode and have Apply called inline.
+func TestSchedulerSerialSelfEffect(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	var order []string
+	logic := &testLogic{
+		id: 50,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			order = append(order, "Think")
+			ctx.Publish(50, testEffect{value: 999})
+			order = append(order, "Think.afterPublish")
+			return 0
+		},
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+			order = append(order, "Apply")
+			if arr.Len() != 1 || arr.At(0).value != 999 {
+				t.Errorf("self-apply got %d effects, want 1 with value 999", arr.Len())
+			}
+		},
+	}
+	world.addLogic(logic)
+
+	sc.Emit(50, testSignal{value: 1})
+	sc.ProcessTick(world)
+
+	// Inline: Apply happens between Think.start and Think.end
+	expected := []string{"Think", "Apply", "Think.afterPublish"}
+	if len(order) != len(expected) {
+		t.Fatalf("order = %v, want %v", order, expected)
+	}
+	for i, v := range expected {
+		if order[i] != v {
+			t.Fatalf("order[%d] = %q, want %q (full: %v)", i, order[i], v, order)
+		}
+	}
+}
+
+// TestSchedulerSerialUnregisteredTarget verifies that effects and signals
+// targeting non-existent logics are silently dropped in serial mode.
+func TestSchedulerSerialUnregisteredTarget(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	logic := &testLogic{
+		id: 1,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			ctx.Publish(99999, testEffect{value: 1})
+			ctx.Emit(88888, testSignal{value: 2})
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	sc.Emit(1, testSignal{value: 0})
+	// Should not panic
+	sc.ProcessTick(world)
+
+	if logic.thinkHits.Load() < 1 {
+		t.Fatalf("Think count = %d, want >= 1", logic.thinkHits.Load())
+	}
+}
+
+// TestSchedulerSerialDeferToNextTick verifies that signals deferred by
+// depth overflow survive to the next tick via the signal buffer swap.
+func TestSchedulerSerialDeferToNextTick(t *testing.T) {
+	meta := serialMeta()
+	meta.MaxSupersteps = 1 // maxDepth=1: only initial frontier Thinks
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	chainLen := int64(0)
+
+	// A → B → C chain, but maxDepth=1 so only A runs in tick 1.
+	logicA := &testLogic{
+		id: 1,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			chainLen++
+			ctx.Emit(2, testSignal{value: 1})
+			return 0
+		},
+	}
+	logicB := &testLogic{
+		id: 2,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			chainLen++
+			ctx.Emit(3, testSignal{value: 2})
+			return 0
+		},
+	}
+	logicC := &testLogic{
+		id: 3,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			chainLen++
+			return 0
+		},
+	}
+
+	world.addLogic(logicA)
+	world.addLogic(logicB)
+	world.addLogic(logicC)
+
+	// Tick 1: A thinks, emits to B (deferred)
+	sc.Emit(1, testSignal{value: 0})
+	sc.ProcessTick(world)
+	if chainLen != 1 {
+		t.Fatalf("tick 1: chain length = %d, want 1", chainLen)
+	}
+
+	// Tick 2: B thinks (from deferred), emits to C (deferred)
+	sc.ProcessTick(world)
+	if chainLen != 2 {
+		t.Fatalf("tick 2: chain length = %d, want 2", chainLen)
+	}
+
+	// Tick 3: C thinks (from deferred)
+	sc.ProcessTick(world)
+	if chainLen != 3 {
+		t.Fatalf("tick 3: chain length = %d, want 3", chainLen)
+	}
+}
+
+// TestSchedulerSerialTimerReregistration verifies that a logic can
+// re-register its timer every tick in serial mode, creating a repeating
+// activation pattern.
+func TestSchedulerSerialTimerReregistration(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	thinkCount := int64(0)
+	logic := &testLogic{
+		id: 1,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkCount++
+			return 1 // always reschedule for next tick
+		},
+	}
+	world.addLogic(logic)
+
+	// Tick 1: initial activation
+	sc.Emit(1, testSignal{value: 0})
+	sc.ProcessTick(world)
+
+	// Ticks 2-5: timer fires every tick
+	for tick := 2; tick <= 5; tick++ {
+		sc.ProcessTick(world)
+	}
+
+	if thinkCount < 5 {
+		t.Fatalf("expected at least 5 total Thinks over 5 ticks, got %d", thinkCount)
+	}
+}
+
+// TestSchedulerParallelToSerial verifies the transition from parallel mode
+// to serial mode within a single tick when frontier shrinks below threshold.
+func TestSchedulerParallelToSerial(t *testing.T) {
+	meta := defaultMeta()
+	// Threshold=5: first round parallel (10 signals), second round serial
+	meta.ThinkConcurrencyThreshold = 5
+	meta.MaxSupersteps = 5
+	meta.Concurrency = 2
+	meta.BlockSize = 7
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	reactorThinkCount := int64(0)
+
+	// 10 logics emit nothing (just Think), but logic 1 emits a signal to
+	// the reactor. After parallel round 1, only 1 signal remains → serial.
+	for i := 1; i <= 10; i++ {
+		id := uint64(i)
+		logic := &testLogic{id: id}
+		if id == 1 {
+			logic.thinkFn = func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+				ctx.Emit(99, testSignal{value: 1})
+				return 0
+			}
+		}
+		world.addLogic(logic)
+		sc.Emit(id, testSignal{value: 0})
+	}
+
+	reactor := &testLogic{
+		id: 99,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			atomic.AddInt64(&reactorThinkCount, 1)
+			return 0
+		},
+	}
+	world.addLogic(reactor)
+
+	sc.ProcessTick(world)
+
+	// Reactor should have been activated (either in parallel round 2 or serial path)
+	if atomic.LoadInt64(&reactorThinkCount) < 1 {
+		t.Fatalf("reactor should think at least once, got %d", reactorThinkCount)
+	}
+}
+
+// TestSchedulerSerialDepthBudgetShared verifies that when parallel rounds
+// consume supersteps, the serial depth budget is reduced accordingly.
+func TestSchedulerSerialDepthBudgetShared(t *testing.T) {
+	meta := defaultMeta()
+	// MaxSupersteps=2, threshold=3.
+	// Tick: 5 signals → parallel round 0. After that, suppose 1 cascaded
+	// signal → serial with maxDepth = 2 - 1 = 1.
+	meta.MaxSupersteps = 2
+	meta.ThinkConcurrencyThreshold = 3
+	meta.Concurrency = 2
+	meta.BlockSize = 7
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	var serialChain []uint64
+
+	// 5 logics, logic 1 emits signal to chain: A→B→C.
+	// After parallel round, A is activated. Serial maxDepth=1, so:
+	//   A thinks (depth 0→1), emits to B
+	//   B: depth=1 >= maxDepth=1 → deferred
+	for i := 1; i <= 5; i++ {
+		id := uint64(i)
+		logic := &testLogic{id: id}
+		if id == 1 {
+			logic.thinkFn = func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+				ctx.Emit(101, testSignal{value: 1})
+				return 0
+			}
+		}
+		world.addLogic(logic)
+		sc.Emit(id, testSignal{value: 0})
+	}
+
+	chainA := &testLogic{
+		id: 101,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			serialChain = append(serialChain, 101)
+			ctx.Emit(102, testSignal{value: 2})
+			return 0
+		},
+	}
+	chainB := &testLogic{
+		id: 102,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			serialChain = append(serialChain, 102)
+			return 0
+		},
+	}
+	world.addLogic(chainA)
+	world.addLogic(chainB)
+
+	// Tick 1: parallel round consumes 5 signals; serial gets maxDepth=1.
+	// A activates, emits to B; B is deferred.
+	sc.ProcessTick(world)
+
+	// A should have been activated; B should be deferred (not yet activated).
+	aActivated := false
+	for _, id := range serialChain {
+		if id == 101 {
+			aActivated = true
+		}
+		if id == 102 {
+			t.Fatalf("tick 1: chainB (102) should be deferred, but was activated")
+		}
+	}
+	if !aActivated {
+		t.Fatalf("tick 1: chainA (101) should have been activated")
+	}
+
+	// Tick 2: deferred signal activates B
+	sc.ProcessTick(world)
+	bActivated := false
+	for _, id := range serialChain {
+		if id == 102 {
+			bActivated = true
+		}
+	}
+	if !bActivated {
+		t.Fatalf("tick 2: chainB (102) should have been activated from deferred signal")
+	}
+}
+
+// TestSchedulerSerialEmptyTick verifies that serial mode handles no-work
+// ticks correctly.
+func TestSchedulerSerialEmptyTick(t *testing.T) {
+	world := newTestWorld()
+	sc := newTestScheduler(serialMeta(), world)
+
+	// Should not panic
+	sc.ProcessTick(world)
+	sc.ProcessTick(world)
+}
+
+// TestSchedulerSerialSelfSignal verifies that a logic can emit a signal
+// to itself in serial mode, causing recursive Think calls up to depth limit.
+func TestSchedulerSerialSelfSignal(t *testing.T) {
+	meta := serialMeta()
+	meta.MaxSupersteps = 3
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(meta, world)
+
+	thinkCount := int64(0)
+	logic := &testLogic{
+		id: 7,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkCount++
+			// Always re-emit to self → depth-limited recursion
+			ctx.Emit(7, testSignal{value: int(thinkCount)})
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	sc.Emit(7, testSignal{value: 0})
+	sc.ProcessTick(world)
+
+	// maxDepth=3: initial Think at depth 1, self-emit at depth 2, self-emit at depth 3 = maxDepth → deferred
+	// So Think should be called exactly 3 times in tick 1.
+	if thinkCount != 3 {
+		t.Fatalf("tick 1: expected 3 Thinks (depth-limited self-recursion), got %d", thinkCount)
+	}
+
+	// Tick 2: the deferred self-signal triggers another round.
+	thinksBefore := thinkCount
+	sc.ProcessTick(world)
+	if thinkCount <= thinksBefore {
+		t.Fatalf("tick 2: expected more Thinks from deferred self-signal, got %d total", thinkCount)
+	}
+}
