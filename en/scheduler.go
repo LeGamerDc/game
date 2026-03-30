@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"cmp"
 	"slices"
 	"sync"
+
+	"golang.org/x/sys/cpu"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -29,6 +32,27 @@ type sliceArrangement[E EffectI] []E
 
 func (s sliceArrangement[E]) Len() int   { return len(s) }
 func (s sliceArrangement[E]) At(i int) E { return s[i] }
+
+// refValInbox 将 []refVal[S] 适配为 Inbox[S] 接口。
+// 用于 sort-based 分组后，将排序区间直接作为 Think 的输入，无需拷贝到独立 []S。
+type refValInbox[S SignalI] []refVal[S]
+
+func (r refValInbox[S]) Len() int   { return len(r) }
+func (r refValInbox[S]) At(i int) S { return r[i].val }
+
+// refValArrangement 将 []refVal[E] 适配为 Arrangement[E] 接口。
+// 用于 sort-based 分组后，将排序区间直接作为 Apply 的输入，无需拷贝到独立 []E。
+type refValArrangement[E EffectI] []refVal[E]
+
+func (r refValArrangement[E]) Len() int   { return len(r) }
+func (r refValArrangement[E]) At(i int) E { return r[i].val }
+
+// collectBuf 是 per-thread 的排序/分组缓冲，用于 Think 和 Apply 阶段。
+// 头部 CacheLinePad 隔离保证相邻 thread 的缓冲不共享 cache line。
+type collectBuf[V any] struct {
+	_   cpu.CacheLinePad
+	buf []V
+}
 
 // blockLoad 记录单个 block 的 effect 负载，用于 Apply 阶段的 LPT 分配。
 type blockLoad struct {
@@ -147,14 +171,17 @@ type Scheduler[W interface {
 	pending []refVal[S]
 
 	// ── Apply 阶段临时数据 ───────────────────────────────────────────
-	applyBlocks [][]int          // threadId → 当前 superstep 分配的 blockId 列表
-	groupBufs   []map[uint64][]E // per-Apply-thread effect 聚合缓冲（复用 capacity）
+	applyBlocks [][]int // threadId → 当前 superstep 分配的 blockId 列表
 
-	// ── Think 阶段临时数据 ───────────────────────────────────────────
-	// signalGroupBufs[threadId]: Think worker 内部按 targetRef 分组 signal 的复用缓冲。
-	// 遍历 signalRead 中某个 block 时，同一 block 可能包含多个 logic 的 signal，
-	// 需要分组后逐组调 Think。处理完后截断 slice 到 0 保留 capacity。
-	signalGroupBufs []map[uint64][]S
+	// ── Sort-based 分组缓冲 ─────────────────────────────────────────
+	// thinkCollectBuf[threadId]: Think worker 收集当前 block 的 signal 到 flat buffer，
+	// 按 ref 排序后线性分组调用 Think。每个 block 处理前截断到 0，跨 block 复用 capacity。
+	// CacheLinePad 隔离保证并行写入无 false sharing。
+	thinkCollectBuf []collectBuf[refVal[S]]
+
+	// applyCollectBuf[threadId]: Apply worker 收集当前 block 的 effect 到 flat buffer，
+	// 按 ref 排序后线性分组调用 Apply。每个 block 处理前截断到 0，跨 block 复用 capacity。
+	applyCollectBuf []collectBuf[refVal[E]]
 
 	// ── 预分配计算缓冲 ──────────────────────────────────────────────
 	blockLoads  []blockLoad // computeApplyAssignment 用
@@ -209,15 +236,13 @@ func NewScheduler[W interface {
 	signalRead := make([]*blockCollector[refVal[S]], c)
 	signalWrite := make([]*blockCollector[refVal[S]], c)
 	applyBlocks := make([][]int, c)
-	groupBufs := make([]map[uint64][]E, c)
-	signalGroupBufs := make([]map[uint64][]S, c)
+	thinkCollectBuf := make([]collectBuf[refVal[S]], c)
+	applyCollectBuf := make([]collectBuf[refVal[E]], c)
 	for i := range c {
 		effectCollectors[i] = newBlockCollector[refVal[E]](bs)
 		signalRead[i] = newBlockCollector[refVal[S]](bs)
 		signalWrite[i] = newBlockCollector[refVal[S]](bs)
 		applyBlocks[i] = make([]int, 0, (bs/c)+1)
-		groupBufs[i] = make(map[uint64][]E)
-		signalGroupBufs[i] = make(map[uint64][]S)
 	}
 
 	return &Scheduler[W, S, E, L]{
@@ -230,8 +255,8 @@ func NewScheduler[W interface {
 		signalRead:       signalRead,
 		signalWrite:      signalWrite,
 		applyBlocks:      applyBlocks,
-		groupBufs:        groupBufs,
-		signalGroupBufs:  signalGroupBufs,
+		thinkCollectBuf:  thinkCollectBuf,
+		applyCollectBuf:  applyCollectBuf,
 		blockLoads:       make([]blockLoad, bs),
 		threadLoads:      make([]int, c),
 	}
@@ -378,8 +403,9 @@ func (sc *Scheduler[W, S, E, L]) parallelThink(world W, includeTimers bool) {
 //  1. Timer（首轮 superstep）：遍历 wheel.get(blockId) 中的到期 refId，
 //     调用 Think(ctx, emptyInbox)。Logic 可能同时被 timer 和 signal 激活，
 //     此时会有多次 Think 调用——设计上合法，Logic 自己处理去重。
-//  2. Signal：跨所有 source thread 读取 signalRead[*][blockId]，
-//     按 refId 分组后逐组调用 Think(ctx, signals)。
+//  2. Signal：跨所有 source thread 收集 signalRead[*][blockId] 到 flat buffer，
+//     按 ref 排序后线性分组，逐组调用 Think(ctx, signals)。
+//     排序替代了 map 分组，避免跨 block 的 map key 膨胀问题。
 //  3. Think 返回 delay > 0 → timerWheel.set（thread-local write，无竞争）。
 //  4. ctx.Publish → effectCollectors[threadId]（per-thread write，无竞争）。
 //  5. ctx.Emit   → signalWrite[threadId]（per-thread write，无竞争）。
@@ -389,6 +415,7 @@ func (sc *Scheduler[W, S, E, L]) parallelThink(world W, includeTimers bool) {
 //   - signalRead[*] 在 Think 阶段只读（上轮 swap 后不再写入）
 //   - effectCollectors[threadId] / signalWrite[threadId] 只有本 thread 写入
 //   - timerWheel.threadBuf[threadId] 只有本 thread 写入
+//   - thinkCollectBuf[threadId] 只有本 thread 读写（CacheLinePad 隔离）
 func (sc *Scheduler[W, S, E, L]) thinkWorker(threadId int, world W, includeTimers bool) {
 	ctx := &ThinkCtx[W, S, E]{
 		World:   world,
@@ -397,7 +424,7 @@ func (sc *Scheduler[W, S, E, L]) thinkWorker(threadId int, world W, includeTimer
 	}
 
 	c := sc.meta.Concurrency
-	buf := sc.signalGroupBufs[threadId]
+	flatBuf := sc.thinkCollectBuf[threadId].buf
 
 	for _, blockId := range sc.thinkBlocks[threadId] {
 		// 1. Timer 到期激活（首轮 superstep）
@@ -414,29 +441,37 @@ func (sc *Scheduler[W, S, E, L]) thinkWorker(threadId int, world W, includeTimer
 			}
 		}
 
-		// 2. Signal 激活：跨所有 source thread 收集，按 refId 分组
+		// 2. 跨所有 source thread 收集 signal 到 flat buffer
+		flatBuf = flatBuf[:0]
 		for srcThread := range c {
-			for _, rv := range sc.signalRead[srcThread].get(blockId) {
-				buf[rv.ref] = append(buf[rv.ref], rv.val)
-			}
+			flatBuf = append(flatBuf, sc.signalRead[srcThread].get(blockId)...)
+		}
+		if len(flatBuf) == 0 {
+			continue
 		}
 
-		// 逐组调用 Think
-		for ref, sigs := range buf {
-			if len(sigs) == 0 {
-				continue // 前一个 block 的残留空条目
+		// 3. 按 ref 排序，线性分组调用 Think
+		slices.SortFunc(flatBuf, func(a, b refVal[S]) int {
+			return cmp.Compare(a.ref, b.ref)
+		})
+		for start := 0; start < len(flatBuf); {
+			ref := flatBuf[start].ref
+			end := start + 1
+			for end < len(flatBuf) && flatBuf[end].ref == ref {
+				end++
 			}
-			logic, ok := sc.w.GetLogic(ref)
-			if ok {
-				delay := logic.Think(ctx, sliceInbox[S](sigs))
+			if logic, ok := sc.w.GetLogic(ref); ok {
+				delay := logic.Think(ctx, refValInbox[S](flatBuf[start:end]))
 				if delay > 0 {
 					sc.timerWheel.set(threadId, blockId, ref, delay)
 				}
 			}
-			// 截断到 0 长度，保留底层 capacity 供后续 block 复用
-			buf[ref] = sigs[:0]
+			start = end
 		}
 	}
+
+	// 写回以保留 grown capacity
+	sc.thinkCollectBuf[threadId].buf = flatBuf
 }
 
 // publishClosure 返回 Think 阶段 thread 专用的 effect 发射闭包。
@@ -537,44 +572,53 @@ func (sc *Scheduler[W, S, E, L]) parallelApply(world W) {
 // applyWorker 是单个 thread 的 Apply 执行逻辑。
 //
 // 对分配到本 thread 的每个 block：
-//  1. 跨所有 Think thread 收集 effectCollectors[*][blockId] 中的 effect
-//  2. 按 targetRef 聚合到 groupBufs[threadId]
-//  3. 对每个 unique targetRef 调用 logic.Apply(commitCtx, effects)
-//  4. Apply 产出的 signal → signalWrite[threadId]
+//  1. 跨所有 Think thread 收集 effectCollectors[*][blockId] 到 flat buffer
+//  2. 按 ref 排序后线性分组，逐组调用 logic.Apply(commitCtx, effects)
+//  3. Apply 产出的 signal → signalWrite[threadId]
 //
 // 线程安全：
 //   - effectCollectors[*] 在 Think barrier 后只读
 //   - 不同 Apply thread 处理不同 block → 不同 targetRef → 无写竞争
 //   - signalWrite[threadId] 只有本 thread 写入
+//   - applyCollectBuf[threadId] 只有本 thread 读写（CacheLinePad 隔离）
 func (sc *Scheduler[W, S, E, L]) applyWorker(threadId int, world W) {
 	ctx := &CommitCtx[W, S]{
 		World: world,
 		Emit:  sc.emitClosure(threadId),
 	}
 
-	buf := sc.groupBufs[threadId]
+	flatBuf := sc.applyCollectBuf[threadId].buf
 	c := sc.meta.Concurrency
 
 	for _, blockId := range sc.applyBlocks[threadId] {
-		// 跨所有 Think thread 收集 effect，按 targetRef 聚合
+		// 跨所有 Think thread 收集 effect 到 flat buffer
+		flatBuf = flatBuf[:0]
 		for t := range c {
-			for _, rv := range sc.effectCollectors[t].get(blockId) {
-				buf[rv.ref] = append(buf[rv.ref], rv.val)
-			}
+			flatBuf = append(flatBuf, sc.effectCollectors[t].get(blockId)...)
+		}
+		if len(flatBuf) == 0 {
+			continue
 		}
 
-		// 对每个 target 调用 Apply，然后重置缓冲
-		for ref, effects := range buf {
-			if len(effects) == 0 {
-				continue // 前一个 block 的残留空条目
+		// 按 ref 排序，线性分组调用 Apply
+		slices.SortFunc(flatBuf, func(a, b refVal[E]) int {
+			return cmp.Compare(a.ref, b.ref)
+		})
+		for start := 0; start < len(flatBuf); {
+			ref := flatBuf[start].ref
+			end := start + 1
+			for end < len(flatBuf) && flatBuf[end].ref == ref {
+				end++
 			}
 			if logic, ok := sc.w.GetLogic(ref); ok {
-				logic.Apply(ctx, sliceArrangement[E](effects))
+				logic.Apply(ctx, refValArrangement[E](flatBuf[start:end]))
 			}
-			// 截断到 0 长度，保留底层 capacity 供后续 block 复用
-			buf[ref] = effects[:0]
+			start = end
 		}
 	}
+
+	// 写回以保留 grown capacity
+	sc.applyCollectBuf[threadId].buf = flatBuf
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # Tasks
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
 ## Active
 
@@ -23,6 +23,8 @@ Last Updated: 2026-03-29
 - [ ] Effect 代数模型设计 — 依赖调度器设计成型 + effect 类型调研完成
 
 ## Done
+
+- [x] Scheduler review 修复：sort-based 分组替代 map 分组（消除 signalGroupBufs/groupBufs 的无限膨胀），新增 refValInbox/refValArrangement 适配器和 collectBuf（CacheLinePad 隔离），26 个测试通过含 race detector (2026-03-30)
 
 - [x] Scheduler 重构：getLogic 注入 + 双缓冲 signal collectors + 去除 per-logic 去重。消除 threadInboxes/threadFrontiers/pendingInbox/routeSignals/buildInitialFrontier/deferRemainingInboxes，改为 signalRead/signalWrite 双缓冲 swap + clear，溢出信号自动保留在 signalRead 延迟到下一 tick。Logic 查找改为外部注入 getLogic func(uint64)(L,bool)。Scheduler 不再保证同一 logic 在同一 superstep 只 Think 一次 (2026-03-29)
 - [x] Scheduler 并行 tick 实现：ProcessTick superstep 循环、Think/Apply 并行、LPT 负载均衡、signal routing、timer wheel 集成、per-thread inbox 隔离、溢出延迟，19 个测试通过含 race detector (2026-03-29)

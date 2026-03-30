@@ -1,10 +1,10 @@
 # Memory
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
 ## Current Focus
 
-- `en/scheduler.go` 并行 tick 调度器已完成重构：getLogic 注入、双缓冲 signal collectors、去除 per-logic 去重。
+- `en/scheduler.go` 并行 tick 调度器已完成 review 反馈修复：sort-based 分组替代 map-based 分组、collectBuf CacheLinePad 隔离。
 - 下一步：实现串行模式（cascade depth）、processTick 的模式路由（frontier < ThinkConcurrencyThreshold 时切换到串行）。
 - 仍有两个已确认的接口问题待修复（Ref 空间歧义、Publish 不区分 Entity/World Effect）。
 
@@ -12,7 +12,7 @@ Last Updated: 2026-03-29
 
 - `en/world.go` 是当前引擎接口讨论的权威入口。
 - `WorldView` 目前已包含 `Now()/Version()/Round()` 三个只读观测接口。
-- `en/scheduler.go` 已完成重构，核心设计：
+- `en/scheduler.go` 已完成重构 + review 修复，核心设计：
   - **getLogic 注入**：`NewScheduler` 接受 `getLogic func(uint64)(L,bool)` 参数，由外部（如 WorldView 实现）负责 logic 生命周期管理。Scheduler 不再内部维护 logic 注册表。
   - **双缓冲 Signal Collectors**：`signalRead`（消费）+ `signalWrite`（产出），superstep 结束 swap + clear。Think/Apply 共用 signalWrite（barrier 保证时序安全）。溢出信号自动保留在 signalRead 中延迟到下一 tick。
   - **无 per-logic 去重**：Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。去除了 threadInboxes/threadFrontiers/pendingInbox/routeSignals/buildInitialFrontier/deferRemainingInboxes。Logic 自身处理重复激活。
@@ -21,10 +21,12 @@ Last Updated: 2026-03-29
   - Think 阶段按 block 稳定分配到 thread（`blockId % Concurrency`，初始化时固定）
   - Apply 阶段使用 LPT（Longest Processing Time first）近似算法按 effect 数量动态分配 block
   - Timer wheel 集成：Think 产出的 delay → thread-local set → tick 结束 merge + advance
-  - `signalGroupBufs[threadId]` 用于 Think worker 内部按 targetRef 分组 signal，遍历 signalRead block 时同一 block 可能包含多个 logic 的 signal，分组后逐组调 Think
+  - **Sort-based 分组**（替代旧的 map-based 分组）：Think/Apply worker 收集当前 block 的 signal/effect 到 per-thread flat buffer（`collectBuf`），按 ref 排序后线性扫描分组。消除了 `signalGroupBufs`/`groupBufs` 两个 `map[uint64][]` 字段，解决了 map key 跨 block 无限膨胀问题。
+  - **CacheLinePad 隔离规则**：所有 per-thread 并发写入的数据结构（`blockCollector`、`timerCollector`、`collectBuf`）头部均有 `cpu.CacheLinePad`，不假定 cache line = 64（ARM 等平台可达 128）。
+  - `refValInbox`/`refValArrangement` 适配器：让排序后的 `[]refVal` 子切片直接实现 `Inbox[S]`/`Arrangement[E]` 接口，零拷贝传给 Think/Apply。
 - `en/scheduler_test.go` 包含测试覆盖全部核心路径，含 race detector 通过。
 - `en/wheel.go` 已完成 Unified Log + Epoch-based Lazy Clear 重构。
-- `en/block_collector.go` 提供 per-thread block-sharded collector，被 scheduler 用于 `refVal[E]` 和 `refVal[S]` 收集。
+- `en/block_collector.go` 提供 per-thread block-sharded collector（头部 CacheLinePad），被 scheduler 用于 `refVal[E]` 和 `refVal[S]` 收集。
 - `docs/design/parallel.md` 是 parallel tick 设计意图的主文档。
 - `docs/design/scheduler.md` 是 Scheduler 并发调度模型设计文档。
 
@@ -84,7 +86,18 @@ Last Updated: 2026-03-29
 **Block-based Effect 收集**：
 - 按 `hash(targetRef) % BlockSize` 分块，collector 存储 `refVal[E]{ref, val}` 保留 targetRef。
 - Apply 阶段按 blockId 分配 worker，跨所有 Think worker 读取对应 block，按 targetRef 聚合后 Apply。
-- 聚合使用 per-thread `map[uint64][]E` 缓冲，处理完后截断 slice 到 0 长度保留 capacity。
+- 聚合使用 per-thread `collectBuf[refVal[E]]` flat buffer，按 ref 排序后线性分组。每个 block 处理前截断到 0，跨 block 复用 capacity。
+
+**Sort-based 分组（替代 map-based 分组）**：
+- 旧方案：per-thread `map[uint64][]S/E`，截断 value slice 到 0 保留 capacity → map key 跨 block 无限膨胀，range 遍历大量空条目。
+- 新方案：per-thread `collectBuf[refVal[S/E]]` flat buffer + `slices.SortFunc` 按 ref 排序 + 线性分组。每个 block 处理前 `flatBuf[:0]`，无跨 block 状态泄漏。
+- `refValInbox[S]`/`refValArrangement[E]` 适配器：将 `[]refVal` 子切片零拷贝适配为 `Inbox[S]`/`Arrangement[E]` 接口。
+- 排序开销：O(n log n)，n 为单 block 粒度（通常个位到两位数），Go 的 pattern-defeating quicksort 对小 n 退化为 insertion sort。
+
+**CacheLinePad 隔离规则**：
+- 不假定 cache line = 64（ARM 等平台 cache line 可达 128），统一使用 `cpu.CacheLinePad`。
+- 所有 per-thread 并发写入的结构体（`blockCollector`、`timerCollector`、`collectBuf`）头部添加 `cpu.CacheLinePad`。
+- 只需头部 pad：下一个元素的头部 pad 自然提供尾部隔离，且 pad 本身不被程序访问。
 
 **Block→Thread 映射**：
 - Think 阶段：`blockId % Concurrency → threadId`，初始化时固定，跨 superstep/tick 一致。
@@ -131,6 +144,7 @@ Last Updated: 2026-03-29
 - 当前 world effect 复用 `Logic` 接口是否足够清晰，还是应单独抽出 world reducer 接口。
 - Worker pool 替代每 superstep 创建 goroutine（TODO 已标注在代码中）。
 - `docs/design/feedback.md` 应并入主设计文档还是保留为评审记录。
+- hasWork 当前 O(C×B) 扫描——代价极低（685 次 len 检查），暂不优化。若后续需要，可在 blockCollector 加 total 计数器降为 O(C)。
 
 ## Relevant Files
 
