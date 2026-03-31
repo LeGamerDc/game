@@ -82,7 +82,10 @@ func (sc *Scheduler[W, S, E, L]) thinkWorker(threadId int, world W, includeTimer
 
 		// 3. 按 ref 排序，线性分组调用 Think
 		slices.SortFunc(flatBuf, func(a, b refVal[S]) int {
-			return cmp.Compare(a.ref, b.ref)
+			if c := cmp.Compare(a.ref, b.ref); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.val.Order(), b.val.Order())
 		})
 		for start := 0; start < len(flatBuf); {
 			ref := flatBuf[start].ref
@@ -181,7 +184,10 @@ func (sc *Scheduler[W, S, E, L]) applyWorker(threadId int, world W) {
 
 		// 按 ref 排序，线性分组调用 Apply
 		slices.SortFunc(flatBuf, func(a, b refVal[E]) int {
-			return cmp.Compare(a.ref, b.ref)
+			if c := cmp.Compare(a.ref, b.ref); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.val.Order(), b.val.Order())
 		})
 		for start := 0; start < len(flatBuf); {
 			ref := flatBuf[start].ref

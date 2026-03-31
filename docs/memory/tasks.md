@@ -1,12 +1,13 @@
 # Tasks
 
-Last Updated: 2025-07-28
+Last Updated: 2026-03-31
 
 ## Active
 
-- [ ] 修复 Ref 空间歧义：`IsSerialRef(RefWorld) == true` 导致三类 ref 不互斥；补充 `RefNone` 常量和 `IsValidRef` 判断
-- [ ] 解决 Publish 不区分 Entity/World Effect：考虑拆分为两个函数或在 `EffectI` 上增加 `TargetDomain` 方法做运行时校验
-- [ ] 更新 `docs/design/scheduler.md` 串行模式伪代码：当前伪代码描述 collect-then-cascade，需改写为 truly inline 设计以匹配代码实现
+- [ ] GDC 投稿准备：先行工作分析与价值评估（新颖性确认 + GDC 竞争力评估）
+- [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线，热点 owner Apply 并行度
+- [ ] 端到端 Combat Path Demo：至少一个完整技能→伤害→buff→死亡链路在框架内运行
+
 
 ## Backlog
 
@@ -20,18 +21,18 @@ Last Updated: 2025-07-28
 - [ ] 选取 1-2 个分类（如 B2 请求-响应、D-1 批量化）做端到端原型验证，确认适配指导手册的实操可行性
 - [ ] 替换 parallelThink/parallelApply 中每 superstep 创建 goroutine 为预分配 worker pool
 - [ ] 评估现有 timer wheel 的"剩余 delay 重注册"语义与更多边界测试
-- [ ] 设计外部输入注入点：网络请求如何在 tick 开始前转化为 Signal 进入对应 Logic 的 inbox（调度器设计前置依赖）
-- [ ] 讨论 Logic 生命周期：是否需要 Init/Dispose 接口，spawn/despawn 时的初始化和清理时机
-- [ ] 讨论 LogicMeta 如何暴露给调度器：设计文档描述了 `max_effects_per_activation`、`priority`、`serial_only` 等元数据，但 `Logic` 接口没有 `Meta()` 方法
-- [ ] 决定 `docs/design/feedback.md` 的归属：并入主设计文档还是保留为历史评审记录
-- [ ] 考虑 `engine.go` 中 GAS 模式与新并行模型的迁移隔离策略
+- [ ] 设计外部输入注入点：网络请求如何在 tick 开始前转化为 Signal 进入对应 Logic 的 inbox
 
 ## Blocked
 
-- [ ] Effect 代数模型设计 — 依赖调度器设计成型 + effect 类型调研完成
+(none)
+
+- [ ] 手动补充搜索 Redmond OOPSLA 2025 的 related work 引用链、NetGames/FDG/I3D 会议论文、中文学术数据库
 
 ## Done
 
+- [x] 2015-2025 Prior Art & Novelty Analysis：搜索 7 个方向（游戏服务器并行化、ECS 并行执行、并行仿真、ownership 模型、Quake 后续、引擎并发架构、工业实践），分析 12+ 工作，结论：无实质新颖性威胁；Redmond OOPSLA 2025 和 SpatialOS 需重点 position；产出 `docs/references/prior_art_novelty_analysis.md` (2025-07)
+- [x] 审计问题回顾与清理：10 个审计问题中 7 个已解决或确认不改，3 个确认为有意设计或已由现有机制覆盖；清理 Active/Backlog/Blocked 中的过时条目 (2026-03-31)
 - [x] 适配性分类指导手册：基于 107 条逻辑链路（30 经典技能 + 77 OpMap 业务）提炼 6 大底层原理分类（A/B1-B4/C/D/E/F），产出 `docs/design/adaptation_guide.md` (2025-07-28)
 - [x] 经典游戏技能适配性调研：分析 LOL/DOTA2/WOW 共 30 个技能，53% 直接适配、47% 需轻度妥协、0% 无法适配；生成框架语义分析提示词 `docs/references/scheduler_analysis_prompt.md` (2025-07-27)
 - [x] 实现串行模式（scheduler_serial.go）及 ProcessTick 模式路由：truly inline 执行（thinkSignal/thinkTimer/applyOne 递归闭包）、栈变量 depth 追踪、countWork 替代 hasWork、parallel→serial 单向切换、blockToThread timer 一致性、14 个 serial 测试 + 21 个 parallel 测试全部通过含 race detector (2026-03-30)

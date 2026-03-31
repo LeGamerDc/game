@@ -27,10 +27,12 @@ type (
 
 	SignalI interface {
 		Kind() SignalKind
+		Order() int32 // 同 ref 内排序键，小值优先。不需要排序时返回 0。
 	}
 
 	EffectI interface {
 		Kind() EffectKind
+		Order() int32 // 同 ref 内排序键，小值优先。不需要排序时返回 0。
 	}
 
 	Inbox[S SignalI] interface {

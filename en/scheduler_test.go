@@ -44,16 +44,20 @@ func (w testWorld) removeLogic(id uint64) {
 type testSignal struct {
 	kind  SignalKind
 	value int
+	order int32
 }
 
 func (s testSignal) Kind() SignalKind { return s.kind }
+func (s testSignal) Order() int32     { return s.order }
 
 type testEffect struct {
 	kind  EffectKind
 	value int
+	order int32
 }
 
 func (e testEffect) Kind() EffectKind { return e.kind }
+func (e testEffect) Order() int32     { return e.order }
 
 // testLogic is a programmable Logic stub.
 // All callbacks are optional; nil means no-op.
@@ -957,6 +961,103 @@ func TestSchedulerDoubleBufferDefer(t *testing.T) {
 	sc.ProcessTick(world)
 	if chainLen != 3 {
 		t.Fatalf("tick 3: expected chain length 3, got %d", chainLen)
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Order determinism tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestSchedulerEffectOrderDeterministic verifies that effects delivered to
+// the same ref are sorted by Order() within the ref group. Effects with
+// smaller Order values appear first in the Arrangement passed to Apply.
+func TestSchedulerEffectOrderDeterministic(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(defaultMeta(), world)
+
+	var received []int32
+
+	producer := &testLogic{
+		id: 100,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			// Publish effects with different Order values in non-sorted order.
+			ctx.Publish(200, testEffect{kind: 1, value: 1, order: 30})
+			ctx.Publish(200, testEffect{kind: 1, value: 2, order: 10})
+			ctx.Publish(200, testEffect{kind: 1, value: 3, order: 20})
+			return 0
+		},
+	}
+	consumer := &testLogic{
+		id: 200,
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+			for i := range arr.Len() {
+				received = append(received, arr.At(i).order)
+			}
+		},
+	}
+
+	world.addLogic(producer)
+	world.addLogic(consumer)
+	sc.Emit(100, testSignal{kind: 1})
+	sc.ProcessTick(world)
+
+	if len(received) != 3 {
+		t.Fatalf("expected 3 effects, got %d", len(received))
+	}
+	// Effects must arrive sorted by Order: 10, 20, 30.
+	expected := []int32{10, 20, 30}
+	for i, v := range expected {
+		if received[i] != v {
+			t.Fatalf("expected order %v, got %v", expected, received)
+		}
+	}
+}
+
+// TestSchedulerSignalOrderDeterministic verifies that signals delivered to
+// the same ref are sorted by Order() within the ref group. Signals with
+// smaller Order values appear first in the Inbox passed to Think.
+func TestSchedulerSignalOrderDeterministic(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(defaultMeta(), world)
+
+	var received []int32
+
+	producer := &testLogic{
+		id: 100,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			// Emit signals with different Order values in non-sorted order.
+			ctx.Emit(200, testSignal{kind: 1, value: 1, order: 30})
+			ctx.Emit(200, testSignal{kind: 1, value: 2, order: 10})
+			ctx.Emit(200, testSignal{kind: 1, value: 3, order: 20})
+			return 0
+		},
+	}
+	consumer := &testLogic{
+		id: 200,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			for i := range inbox.Len() {
+				received = append(received, inbox.At(i).order)
+			}
+			return 0
+		},
+	}
+
+	world.addLogic(producer)
+	world.addLogic(consumer)
+	sc.Emit(100, testSignal{kind: 1})
+	sc.ProcessTick(world)
+
+	if len(received) != 3 {
+		t.Fatalf("expected 3 signals, got %d", len(received))
+	}
+	// Signals must arrive sorted by Order: 10, 20, 30.
+	expected := []int32{10, 20, 30}
+	for i, v := range expected {
+		if received[i] != v {
+			t.Fatalf("expected order %v, got %v", expected, received)
+		}
 	}
 }
 

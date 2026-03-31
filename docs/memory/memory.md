@@ -1,25 +1,39 @@
 # Memory
 
-Last Updated: 2025-07-27
+Last Updated: 2026-03-31
 
 ## Current Focus
 
-- Scheduler 开发已完成（parallel + serial 双模式），**框架适配性验证阶段已完成两轮调研 + 分类指导文档**。
-- 两轮调研覆盖 107 条逻辑链路：30 条经典游戏技能（LOL/DOTA2/WOW）+ 77 条 OpMap 真实业务（8 个子系统）。
-- 已产出适配分类指导手册 `docs/design/adaptation_guide.md`，基于底层原理（owner 闭环、跨 owner 写模式、快照时序、无序安全、级联收敛、全局序列化）建立 6 大分类 + 子分类，配合 5 步判定流程和改造模式速查表。
-- 待决：是否选取 1-2 个妥协场景做端到端原型验证；是否进入实际代码改造阶段。
+- **GDC 投稿准备阶段**：先行工作分析与价值评估已完成，进入 benchmark + demo 阶段。
+- 先行工作对比分析完成：7 篇用户提供的论文 + 12+ 近年工作全部分析，产出综合覆盖矩阵和新颖性结论。
+- GDC 发表价值评估完成：判定为 **Competitive**，目标系统填补了 GDC "服务器端 tick 并行化"的主题空白。
+- 下一步 P0 任务：性能 Benchmark + 端到端 combat path demo。
+- GDC 2027 (March 1-5, 2027) 的 Call for Submissions 预计 2026 年 7-9 月开放。
+- **2015-2025 Prior Art & Novelty Analysis 已完成**：搜索 7 个方向、分析 12+ 工作，结论为无实质新颖性威胁。
 
 ## Latest State
 
 - Scheduler 实现完成，代码在 `en/scheduler*.go`，35 个测试全部通过。
-- 适配性调研全部完成，产出文件：
-  - `docs/references/scheduler_analysis_prompt.md`：框架语义提示词（可复用）
-  - `docs/tmp/lol_skills_analysis.md`：LOL 10 个技能分析
-  - `docs/tmp/dota2_skills_analysis.md`：DOTA2 10 个技能分析
-  - `docs/tmp/wow_skills_analysis.md`：WOW 10 个技能分析
-  - `docs/tmp/summary_analysis.md`：跨游戏总结分析
-  - OpMap 真实业务分析（8 份子报告 + 1 份最终总结，位于外部目录）
-- **适配分类指导手册已完成**：`docs/design/adaptation_guide.md`
+- 适配性调研全部完成，适配分类指导手册已完成：`docs/design/adaptation_guide.md`
+- 旧 GAS 模式代码已归档为 `en/engine_bak.go`（全部注释掉），与新模型无冲突。
+- **GDC 先行工作分析已完成**，产出文件：
+  - `docs/papers/novelty_and_value_analysis.md`：综合先行工作对比与 GDC 发表价值分析
+  - `docs/references/prior_work_analysis.md`：7 篇先行论文逐篇深度分析
+  - `docs/references/prior_art_novelty_analysis.md`：2015–2025 年间近年工作新颖性分析
+
+### 新颖性分析核心结论
+
+- **10 项核心特征中，F3（ownership）、F4（effect 代数）、F5（串/并自适应）、F9（107 条验证）、F10（适配方法论）在所有已知先行工作中完全无覆盖**
+- 最高威胁论文：SynQuake 2010（2.5/5），stage-based + barrier 但无 ownership / effect 代数
+- 需重点 position 的工作：Cordeiro 2007（BSP 概念先驱）、Redmond OOPSLA 2025（同期 ECS 形式化，不同技术路径）
+- 核心方法论差异：先行工作全部依赖"检测冲突"（锁/TM），目标系统通过 ownership + effect 代数"结构性消除冲突"
+
+### GDC 发表价值核心结论
+
+- GDC 2027 track 已从 "Programming" 改名为 "Game & Production Technology"
+- 服务器端 tick 并行化在 GDC 历史上是**主题空白**
+- SpacetimeDB (GDC 2025) 是最近的服务器端并发架构演讲，但走数据库事务路径（互补非竞争）
+- P0 差距：benchmark + 端到端 combat path demo
 
 ### 适配性调研核心结论（107 条逻辑链路）
 
@@ -45,13 +59,22 @@ Last Updated: 2025-07-27
 
 - **高优先级**：Effect 分类扫描工具（C6 两阶段扫描高频刚需）、空间查询 API（WorldView 需版本化空间索引）
 - **中优先级**：标准化投射物 Logic 模板、CC 效果标准化、untargetable/invulnerable 状态标准化
-- **低优先级**：per-logic budget（LogicMeta）、Signal 链路追踪（debug/tracing）
+- **低优先级**：Signal 链路追踪（debug/tracing）
 
 ## Confirmed Decisions
 
 ### 协作流程
 
 - 协作记忆统一在 `docs/memory/` 目录下，包含三个文件：`memory.md`、`tasks.md`、`todo.md`。
+
+### Prior Art Novelty Analysis 结论（2015-2025）
+
+- **2015-2025 年间没有工作完整覆盖目标系统的核心设计**：搜索覆盖 12+ 学术/工业工作，无任何单一或组合工作覆盖 6 个核心特征中的 3 个或更多。
+- **最需要 position 的工作**：Redmond et al. (OOPSLA 2025) "Core ECS" 形式化模型——同期工作但不同路径（component-type disjoint access vs owner+commutativity）；SpatialOS authority 模型——分布式场景的 owner 类似实践但无 BSP/effect 代数。
+- **Cordeiro BSP Quake (2005/2012)** 是唯一的 BSP 游戏服务器前驱，2015 年后无后续深化，应定位为启发性前驱。
+- **F4（typed effect commutativity）、F5（自适应串并行切换）、F6（107 条链路适配验证）在所有搜索范围内无任何覆盖**。
+- **新颖性来自六个特征的组合**：BSP Think/Apply 两阶段 + owner-based 分区 + typed effect commutativity + 自适应串并行 + 大规模适配验证，在搜索覆盖的文献中是唯一的。
+- 详见 `docs/references/prior_art_novelty_analysis.md`。
 
 ### 框架适配性调研结论
 
@@ -61,14 +84,28 @@ Last Updated: 2025-07-27
 - **框架语义提示词方案可行**：`docs/references/scheduler_analysis_prompt.md` 可有效指导 agent 适配判定。
 - **适配分类指导手册已产出**：`docs/design/adaptation_guide.md` 提供 6 大底层原理分类 + 5 步判定流程 + 10 种改造模式速查。
 
-### Parallel Tick 接口审计结论
+### Parallel Tick 接口审计结论（已全部关闭）
 
-**需要修复的接口问题：**
+**已修复的接口问题：**
 
-1. **Ref 空间歧义**：`IsSerialRef(RefWorld) == true`，三类 ref 不互斥。需要明确互斥分区。
-2. **Publish 不区分 Entity/World Effect**：需要拆分或加 domain 标记。
+1. **RefNone / IsValidRef**：已实现 `RefNone uint64 = 0` 和 `IsValidRef()`。
+2. **WorldView 增强**：已增加 `Version() uint32` 和 `Round() int32`。
 
-**确认不改的设计点（3-10）**：WorldView 极简、Signal/Effect source ref 用户管理、代数模型推迟、Budget/Meta 不进 Logic 接口、Apply→Emit 合法、Timer 冲突 Logic 处理、Think 激活类型不分类、Ack 内嵌 Think/private state。
+**确认为有意设计：**
+
+3. **IsSerialRef >= RefWorld**：有意设计。Serial ref 使用 >= RefWorld 的地址空间，RefWorld 本身也是 serial 的一种。三类 ref 不是互斥分区，而是 normal (< RefWorld) vs serial (>= RefWorld)，其中 RefWorld 是 serial 的特殊成员。
+4. **Publish 不区分 Entity/World Effect**：确认不改。单一 `Publish(ref, effect)` 足够，路由完全由 target ref 决定。
+5. **Signal/Effect 无 source ref**：确认由用户 payload 自行携带。
+6. **Effect 代数元数据**：确认不需要。Order() 提供了更通用的排序机制，实践中不太可能出现 effect/signal 合并需求。
+7. **Think 激活类型不分类**：确认不改。Inbox 空 = timer/frontier，非空 = signal。
+8. **Apply→Emit 合法**：已通过 MaxSupersteps（parallel）和 maxDepth（serial）防护。
+9. **Apply 无返回值**：确认不改。
+10. **ThinkCtx 函数引用可被逃逸 / WorldView 可被类型断言写穿**：Go 语言限制，靠规范约束。
+
+**确认由用户逻辑处理：**
+
+11. **Logic 生命周期（Init/Dispose）**：不需要框架级接口。Logic 首次被调用时内部状态机自行识别并 Init；Dispose 随 Unit lifecycle 自然发生，timer wheel 弹出找不到的 refId 即为已销毁。
+12. **LogicMeta**：由 `ScheduleMeta` 统一管理，不需要 Logic 接口暴露 `Meta()` 方法。
 
 ### Serial 模式设计决策
 
@@ -86,16 +123,17 @@ Last Updated: 2025-07-27
 
 ## Open Questions
 
+- **GDC 投稿**：benchmark 设计方案（entity 规模梯度、热点场景、对比基线选择）。
+- **GDC 投稿**：端到端 combat path demo 的技能/buff/伤害选型。
+- **GDC 投稿**：补充搜索已知盲点（中文学术文献、专利库、NetGames/FDG/I3D 会议）。
+- **GDC 投稿**：检查 Redmond OOPSLA 2025 论文的 Related Work 引用链。
 - 是否选取 1-2 个妥协技能（如 Meepo 联动死亡、Guardian Spirit 死亡替代）做端到端原型验证。
 - 是否将适配性分析扩展到非战斗系统（交易、社交、副本机制）以验证 P5 资源交换模式。
 - Effect 分类扫描工具的具体 API 设计（C6 两阶段扫描模式）。
 - 空间查询 API 的版本化语义如何在 WorldView 中体现。
-- Logic 生命周期方法（Init/Dispose）是否需要加入接口。
-- LogicMeta 如何暴露给调度器。
-- ThinkCtx 函数引用可被 Logic 逃逸存储——Go 限制，只能靠规范。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
-- Worker pool 替代每 superstep 创建 goroutine（TODO 已标注）。
-- `docs/design/scheduler.md` 串行伪代码需要更新以反映 truly inline 设计。
+- Worker pool 替代每 superstep 创建 goroutine（代码中已有 TODO 标注）。
+- Prior art 补充搜索：Redmond OOPSLA 2025 的 related work 引用链、NetGames/FDG/I3D 会议、中文学术数据库。
 
 ## Relevant Files
 
@@ -111,12 +149,11 @@ Last Updated: 2025-07-27
 - `en/utils.go`
 - `docs/design/parallel.md`
 - `docs/design/scheduler.md`
-- `docs/design/adaptation_guide.md`（**适配分类指导手册**，6 大分类 + 判定流程 + 改造模式速查）
+- `docs/design/adaptation_guide.md`（适配分类指导手册）
 - `docs/references/scheduler_analysis_prompt.md`（框架语义提示词）
-- `docs/tmp/lol_skills_analysis.md`（LOL 适配分析）
-- `docs/tmp/dota2_skills_analysis.md`（DOTA2 适配分析）
-- `docs/tmp/wow_skills_analysis.md`（WOW 适配分析）
-- `docs/tmp/summary_analysis.md`（跨游戏总结分析）
+- `docs/papers/novelty_and_value_analysis.md`（综合先行工作对比与 GDC 价值分析）
+- `docs/references/prior_work_analysis.md`（7 篇先行论文逐篇分析）
+- `docs/references/prior_art_novelty_analysis.md`（2015–2025 近年工作新颖性分析）
 
 ## Should
 
