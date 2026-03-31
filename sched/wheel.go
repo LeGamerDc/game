@@ -1,4 +1,4 @@
-package engine
+package sched
 
 import (
 	"github.com/legamerdc/game/lib"

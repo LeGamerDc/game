@@ -1,4 +1,4 @@
-package engine
+package sched
 
 import (
 	"golang.org/x/sys/cpu"

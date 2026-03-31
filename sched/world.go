@@ -1,4 +1,4 @@
-package engine
+package sched
 
 type (
 	EffectKind int32
