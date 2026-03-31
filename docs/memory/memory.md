@@ -1,76 +1,65 @@
 # Memory
 
-Last Updated: 2026-03-30
+Last Updated: 2025-07-27
 
 ## Current Focus
 
-- `scheduler_serial.go` 串行模式已完成实现并通过全部测试（含 race detector）。
-- `ProcessTick` 已支持 parallel/serial 自动模式路由：每轮 superstep 根据 `countWork` vs `ThinkConcurrencyThreshold` 选择模式。
-- 下一步：修复两个已确认的接口问题（Ref 空间歧义、Publish 不区分 Entity/World Effect）。
+- Scheduler 开发已完成（parallel + serial 双模式），**框架适配性验证阶段已完成两轮调研 + 分类指导文档**。
+- 两轮调研覆盖 107 条逻辑链路：30 条经典游戏技能（LOL/DOTA2/WOW）+ 77 条 OpMap 真实业务（8 个子系统）。
+- 已产出适配分类指导手册 `docs/design/adaptation_guide.md`，基于底层原理（owner 闭环、跨 owner 写模式、快照时序、无序安全、级联收敛、全局序列化）建立 6 大分类 + 子分类，配合 5 步判定流程和改造模式速查表。
+- 待决：是否选取 1-2 个妥协场景做端到端原型验证；是否进入实际代码改造阶段。
 
 ## Latest State
 
-- `en/world.go` 是当前引擎接口讨论的权威入口。
-- `WorldView` 目前已包含 `Now()/Version()/Round()` 三个只读观测接口。
-- `en/scheduler.go` 核心调度器，包含 `ProcessTick`（双模式路由）、`countWork`、`injectPending`、`swapSignalBuffers`、`resetEffectCollectors`。
-- `en/scheduler_parallel.go` 并行路径：`parallelThink`/`parallelApply`/`thinkWorker`/`applyWorker` + `emitClosure`/`publishClosure`。
-- `en/scheduler_serial.go` 串行路径：`serialProcess` 通过三个递归闭包（`thinkSignal`/`thinkTimer`/`applyOne`）实现 truly inline 执行。
-- `en/scheduler_test.go` 共 35 个测试（21 个 parallel + 14 个 serial），全部通过含 race detector。
+- Scheduler 实现完成，代码在 `en/scheduler*.go`，35 个测试全部通过。
+- 适配性调研全部完成，产出文件：
+  - `docs/references/scheduler_analysis_prompt.md`：框架语义提示词（可复用）
+  - `docs/tmp/lol_skills_analysis.md`：LOL 10 个技能分析
+  - `docs/tmp/dota2_skills_analysis.md`：DOTA2 10 个技能分析
+  - `docs/tmp/wow_skills_analysis.md`：WOW 10 个技能分析
+  - `docs/tmp/summary_analysis.md`：跨游戏总结分析
+  - OpMap 真实业务分析（8 份子报告 + 1 份最终总结，位于外部目录）
+- **适配分类指导手册已完成**：`docs/design/adaptation_guide.md`
 
-### Scheduler 核心设计
+### 适配性调研核心结论（107 条逻辑链路）
 
-- **getLogic 注入**：`NewScheduler` 接受 W（同时实现 `WorldView` + `LogicProvider[L]`），由外部负责 logic 生命周期管理。
-- **双缓冲 Signal Collectors**：`signalRead`（消费）+ `signalWrite`（产出），superstep/serial 结束后 swap + clear。
-- **无 per-logic 去重**：Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。Logic 自身处理重复激活。
-- **外部输入**：`Emit()` → `pending` → `injectPending` 注入 `signalRead[0]`。
-- **Sort-based 分组**（parallel only）：per-thread `collectBuf` flat buffer + sort by ref + 线性分组。
-- **CacheLinePad 隔离**（parallel only）：`blockCollector`、`timerCollector`、`collectBuf` 头部 pad。
+- **107 条逻辑链路无一被判定为无法适配（0% 无法适配）**
+- 经典游戏：53% 直接适配，47% 需轻度妥协
+- OpMap 真实业务：37.7% 直接适配，62.3% 需要妥协改造（但均有成熟模式）
+- C1（单 owner 提交）100% 触及且 100% 满足——ownership 模型与游戏逻辑天然结构高度一致
+- C3（barrier 可见性）是最常见妥协来源，95%+ 属于可容忍延迟
+- C5（串行域）经典技能 0% 触及，OpMap 仅 15% 触及且全为低频基础设施操作
+- 所有妥协的本质都可归结为时序延迟（C3），在 30Hz+ tick rate 下对玩家不可感知
 
-### ProcessTick 生命周期
+### 适配分类指导手册核心结构
 
-```
-injectPending → superstep 循环 {
-  countWork(includeTimers) → workCount
-  workCount == 0 → break
-  workCount >= ThinkConcurrencyThreshold → parallel path:
-    parallelThink → computeApplyAssignment → parallelApply → swap → reset
-  workCount < ThinkConcurrencyThreshold → serial path:
-    serialProcess(includeTimers, maxDepth=MaxSupersteps-round) → swap → break
-} → merge timer wheel → advance timer wheel
-```
+六大分类（基于底层原理）：
+- **A. Owner 闭环**：逻辑完全在单 owner 内，直接适配
+- **B. 跨 Owner 写模式**：B1 单向投递 / B2 请求-响应 / B3 资源预留 / B4 扇出广播
+- **C. 快照时序延迟**：C-0 无敏感 / C-1 可容忍 / C-2 裁决迁移 / C-3 需即时可见
+- **D. 无序安全性**：D-0 天然可交换 / D-1 批量化 / D-2 确定性排序
+- **E. 级联收敛性**：E-0 单跳 / E-1 浅链 / E-2 深链 / E-3 潜在无界
+- **F. 全局序列化**：收归 World Apply 串行执行
 
-### Serial 模式设计
+### 框架改进建议（来自调研）
 
-- **Truly inline 执行**：`Publish`/`Emit` 闭包立即调用目标 logic 的 Apply/Think，不经过任何中间缓冲。
-- **三个递归闭包**：
-  - `thinkSignal(ref, sig)`：depth check → GetLogic → depth++ → Think(单信号 Inbox) → depth-- → timer set
-  - `thinkTimer(ref)`：GetLogic → depth++ → Think(空 Inbox) → depth-- → timer set
-  - `applyOne(ref, eff)`：GetLogic → Apply(单 effect Arrangement)，不增加 depth
-- **Depth 追踪**：栈变量 `depth` 通过 inc/dec 自然匹配递归调用栈。不嵌入 refVal，不影响 parallel 路径的 cache 效率。
-- **Depth 语义**：Think→Publish→Apply 是同一 depth 层级的原子操作；只有经过 Think 时 depth+1。
-- **溢出处理**：`depth >= maxDepth` 时信号写入 `signalWrite[0]`（serial 不读 signalWrite），`ProcessTick` 结束时 swap 保留到下一 tick。
-- **Timer 注册**：使用 `blockToThread[blockId]` 映射写入正确的 thread-local log，与 parallel 模式的 last-write-wins 语义一致。
-- **零重量级基础设施**：不使用 blockCollector、不排序、不分组、不创建 goroutine。开销仅为递归函数调用 + 闭包创建（一次性）。
-- **ThinkCtx/CommitCtx 复用**：创建一次，闭包捕获 depth 引用，跨所有递归调用复用。
-
-### 模式切换
-
-- `countWork` 替代了原 `hasWork`，返回 work item 总数（signal + timer），达到 threshold 时 early exit。
-- 每轮 superstep 独立判断模式；串行是终态（break），不可回到并行。
-- 串行 depth 预算 = `MaxSupersteps - 已完成并发轮次`。
-
-### Timer Wheel
-
-- 单层环形数组，大小 200。
-- Unified Log + Epoch-based Lazy Clear。
-- merge() O(actual_registrations)，advance() O(threads)。
-- Serial 模式通过 `blockToThread` 映射使用正确的 thread-local log，保证与 parallel 模式的覆盖语义一致。
+- **高优先级**：Effect 分类扫描工具（C6 两阶段扫描高频刚需）、空间查询 API（WorldView 需版本化空间索引）
+- **中优先级**：标准化投射物 Logic 模板、CC 效果标准化、untargetable/invulnerable 状态标准化
+- **低优先级**：per-logic budget（LogicMeta）、Signal 链路追踪（debug/tracing）
 
 ## Confirmed Decisions
 
 ### 协作流程
 
 - 协作记忆统一在 `docs/memory/` 目录下，包含三个文件：`memory.md`、`tasks.md`、`todo.md`。
+
+### 框架适配性调研结论
+
+- **Ownership 模型与游戏逻辑天然结构高度一致**：107 条逻辑链路 100% 可以明确归属真相 owner。
+- **串行域在核心战斗/战略逻辑中不被需要**：经典技能 0% 触及 C5，OpMap 仅基础设施操作触及。
+- **所有妥协的本质都是时序延迟（C3）**：在 30Hz+ tick rate 下对玩家不可感知。
+- **框架语义提示词方案可行**：`docs/references/scheduler_analysis_prompt.md` 可有效指导 agent 适配判定。
+- **适配分类指导手册已产出**：`docs/design/adaptation_guide.md` 提供 6 大底层原理分类 + 5 步判定流程 + 10 种改造模式速查。
 
 ### Parallel Tick 接口审计结论
 
@@ -84,45 +73,28 @@ injectPending → superstep 循环 {
 ### Serial 模式设计决策
 
 - **Truly inline**（非 collect-then-cascade）：Publish/Emit 原地触发 Apply/Think，不做 Think 输出的中间收集。
-- **Apply 粒度差异已确认接受**：serial 模式下 Apply 每次收到单个 effect（vs parallel 模式的批量 Arrangement）。这是 truly inline 的自然结果，用户确认可接受。
-- **设计文档伪代码已过时**：`scheduler.md` 中的串行伪代码（collect-then-cascade）未经审查，以代码为准。
-- **Logic 接口不变**：`thinkSignal`/`thinkTimer`/`applyOne` 是 scheduler 内部闭包，不改 Logic interface。Serial/parallel 对 Logic 实现完全透明。
+- **Apply 粒度差异已确认接受**：serial 模式下 Apply 每次收到单个 effect（vs parallel 模式的批量 Arrangement）。
+- **Logic 接口不变**：Serial/parallel 对 Logic 实现完全透明。
 - **Depth 用栈变量追踪**：不嵌入 signal/effect 值，避免膨胀 parallel 路径的 refVal 结构体。
-
-### Logic 查找
-
-- `getLogic` 由外部注入（通过 W 的 `LogicProvider[L]` 接口），Scheduler 不维护 logic 注册表。
-
-### 去重
-
-- Scheduler 不保证同一 logic 在同一 superstep 只 Think 一次。
-
-### 双缓冲 Signal Collectors
-
-- signalRead/signalWrite swap + clear。Think/Apply 共用 signalWrite（barrier 保证时序安全，或 serial 模式下不使用 signalWrite 除溢出）。
 
 ### Scheduler 并发模型
 
 - Think 阈值 500、并发 worker 5、最多 3 轮 superstep。参数统一放入 `ScheduleMeta`。
-- Block-based effect 收集，sort-based 分组替代 map。
-- CacheLinePad 隔离规则。
-- Think 阶段 `blockId % Concurrency → threadId`（稳定映射）。
-- Apply 阶段 LPT 动态分配。
-- World Effect 按 `hash(RefWorld) % BlockSize` 落入某个 block。
+- Block-based effect 收集，sort-based 分组替代 map。CacheLinePad 隔离。
+- Think 阶段 `blockId % Concurrency → threadId`（稳定映射）。Apply 阶段 LPT 动态分配。
+- `getLogic` 由外部注入（`LogicProvider[L]` 接口）。无 per-logic 去重。双缓冲 Signal Collectors。
 
 ## Open Questions
 
+- 是否选取 1-2 个妥协技能（如 Meepo 联动死亡、Guardian Spirit 死亡替代）做端到端原型验证。
+- 是否将适配性分析扩展到非战斗系统（交易、社交、副本机制）以验证 P5 资源交换模式。
+- Effect 分类扫描工具的具体 API 设计（C6 两阶段扫描模式）。
+- 空间查询 API 的版本化语义如何在 WorldView 中体现。
 - Logic 生命周期方法（Init/Dispose）是否需要加入接口。
 - LogicMeta 如何暴露给调度器。
 - ThinkCtx 函数引用可被 Logic 逃逸存储——Go 限制，只能靠规范。
-- `engine.go` 中现有 GAS 模式与新并行模型的迁移隔离策略。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
-- Think 返回 delay 的时间基准：相对当前 tick 的偏移量？
-- Block 粒度（137）是否适合所有负载模式。
-- `TickStats` 是否需要扩展为 tracing/debug API。
-- World effect 复用 `Logic` 接口是否足够清晰。
 - Worker pool 替代每 superstep 创建 goroutine（TODO 已标注）。
-- `docs/design/feedback.md` 应并入主设计文档还是保留。
 - `docs/design/scheduler.md` 串行伪代码需要更新以反映 truly inline 设计。
 
 ## Relevant Files
@@ -137,12 +109,14 @@ injectPending → superstep 循环 {
 - `en/wheel_test.go`
 - `en/block_collector.go`
 - `en/utils.go`
-- `en/engine_bak.go`
 - `docs/design/parallel.md`
 - `docs/design/scheduler.md`
-- `docs/design/feedback.md`
-- `docs/references/parallel_theory.md`
-- `docs/references/survey.md`
+- `docs/design/adaptation_guide.md`（**适配分类指导手册**，6 大分类 + 判定流程 + 改造模式速查）
+- `docs/references/scheduler_analysis_prompt.md`（框架语义提示词）
+- `docs/tmp/lol_skills_analysis.md`（LOL 适配分析）
+- `docs/tmp/dota2_skills_analysis.md`（DOTA2 适配分析）
+- `docs/tmp/wow_skills_analysis.md`（WOW 适配分析）
+- `docs/tmp/summary_analysis.md`（跨游戏总结分析）
 
 ## Should
 
