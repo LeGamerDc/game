@@ -18,32 +18,20 @@ type refVal[V any] struct {
 	val V
 }
 
-// sliceInbox 将 []S 适配为 Inbox[S] 接口。
+// sliceInbox 将 []V 适配为 Inbox[V] 接口。
 // nil 或空 slice 产生 Len()==0，表示 timer-only 激活（无信号需消费）。
-type sliceInbox[S SignalI] []S
+// 同时用于 signal（Think）和 effect（Apply）的单元素或空 inbox。
+type sliceInbox[V any] []V
 
-func (s sliceInbox[S]) Len() int   { return len(s) }
-func (s sliceInbox[S]) At(i int) S { return s[i] }
+func (s sliceInbox[V]) Len() int   { return len(s) }
+func (s sliceInbox[V]) At(i int) V { return s[i] }
 
-// sliceArrangement 将 []E 适配为 Arrangement[E] 接口。
-type sliceArrangement[E EffectI] []E
+// refValInbox 将 []refVal[V] 适配为 Inbox[V] 接口。
+// 用于 sort-based 分组后，将排序区间直接作为 Think/Apply 的输入，无需拷贝到独立 []V。
+type refValInbox[V any] []refVal[V]
 
-func (s sliceArrangement[E]) Len() int   { return len(s) }
-func (s sliceArrangement[E]) At(i int) E { return s[i] }
-
-// refValInbox 将 []refVal[S] 适配为 Inbox[S] 接口。
-// 用于 sort-based 分组后，将排序区间直接作为 Think 的输入，无需拷贝到独立 []S。
-type refValInbox[S SignalI] []refVal[S]
-
-func (r refValInbox[S]) Len() int   { return len(r) }
-func (r refValInbox[S]) At(i int) S { return r[i].val }
-
-// refValArrangement 将 []refVal[E] 适配为 Arrangement[E] 接口。
-// 用于 sort-based 分组后，将排序区间直接作为 Apply 的输入，无需拷贝到独立 []E。
-type refValArrangement[E EffectI] []refVal[E]
-
-func (r refValArrangement[E]) Len() int   { return len(r) }
-func (r refValArrangement[E]) At(i int) E { return r[i].val }
+func (r refValInbox[V]) Len() int   { return len(r) }
+func (r refValInbox[V]) At(i int) V { return r[i].val }
 
 // collectBuf 是 per-thread 的排序/分组缓冲，用于 Think 和 Apply 阶段。
 // 头部 CacheLinePad 隔离保证相邻 thread 的缓冲不共享 cache line。
@@ -78,7 +66,7 @@ const collectorMaxRetain = 128
 // 跳过 effect 数量为 0 的 block（无需 Apply）。
 //
 // 复杂度：O(B log B + B·T)，其中 B = BlockSize, T = Concurrency。
-func (sc *Scheduler[W, S, E, L]) computeApplyAssignment() {
+func (sc *Scheduler[W, S, E, L, WS]) computeApplyAssignment() {
 	c := sc.meta.Concurrency
 	bs := sc.meta.BlockSize
 

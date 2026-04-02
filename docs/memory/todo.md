@@ -1,6 +1,24 @@
 # Todo — 当前任务执行清单
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
+
+## 最近完成：WatchState 机制实现
+
+### 已完成步骤
+
+- [x] 设计 WatchState 接口：`Interest(SignalKind) bool`，抽象底层实现
+- [x] WorldView 暴露 `WatchOf(uint64) WS` 查询接口
+- [x] World vs WorldView 分层：`World[WS]` 扩展 `WorldView[WS]`，增加 `GetWorldView()`
+- [x] ThinkCtx 增加 `SetWatch func(WS)` 字段，Logic 在 Think 中声明兴趣
+- [x] CommitCtx 使用 `WorldView[WS]`（只读访问）
+- [x] 并发模式：per-thread watchCollectors → Think barrier 后 commitWatches 批量提交（BSP 一致性）
+- [x] 串行模式：SetWatch 立即调用 `world.CommitWatches`（truly inline 语义一致）
+- [x] 默认无 watch：未调用 SetWatch 的 Logic 不接收 signal
+- [x] WatchCommitter 接口：`CommitWatches(Inbox[RefWatch[WS]])`，World 实现批量提交
+- [x] Arrangement 移除：Apply 统一使用 `Inbox[E]`，`sliceInbox`/`refValInbox` 泛化为 `any`
+- [x] Scheduler 5 类型参数：`Scheduler[W, S, E, L, WS]`
+- [x] 35 个测试全部通过
+- [x] 更新设计文档：`scheduler.md`、`parallel.md`、`memory.md`、`tasks.md`、`todo.md`
 
 ## 当前任务：GDC 投稿准备 — 先行工作分析与价值评估
 

@@ -9,15 +9,20 @@ import (
 // Test doubles
 // ────────────────────────────────────────────────────────────────────────────
 
+type testWatchState struct{}
+
+func (testWatchState) Interest(SignalKind) bool { return false }
+
 type testWorld struct {
 	now     int64
 	version uint32
 	round   int32
 	logics  map[uint64]*testLogic
+	watches map[uint64]testWatchState
 }
 
 func newTestWorld() testWorld {
-	return testWorld{logics: make(map[uint64]*testLogic)}
+	return testWorld{logics: make(map[uint64]*testLogic), watches: make(map[uint64]testWatchState)}
 }
 
 func (w testWorld) Now() int64      { return w.now }
@@ -39,6 +44,21 @@ func (w testWorld) addLogic(logic *testLogic) {
 
 func (w testWorld) removeLogic(id uint64) {
 	delete(w.logics, id)
+}
+
+func (w testWorld) WatchOf(ref uint64) testWatchState {
+	return w.watches[ref]
+}
+
+func (w testWorld) GetWorldView() WorldView[testWatchState] {
+	return w
+}
+
+func (w testWorld) CommitWatches(inbox Inbox[RefWatch[testWatchState]]) {
+	for i := range inbox.Len() {
+		rw := inbox.At(i)
+		w.watches[rw.RefId] = rw.WS
+	}
 }
 
 type testSignal struct {
@@ -63,15 +83,15 @@ func (e testEffect) Order() int32     { return e.order }
 // All callbacks are optional; nil means no-op.
 type testLogic struct {
 	id        uint64
-	thinkFn   func(*ThinkCtx[testWorld, testSignal, testEffect], Inbox[testSignal]) int64
-	applyFn   func(*CommitCtx[testWorld, testSignal], Arrangement[testEffect])
+	thinkFn   func(*ThinkCtx[testWorld, testSignal, testEffect, testWatchState], Inbox[testSignal]) int64
+	applyFn   func(*CommitCtx[WorldView[testWatchState], testSignal, testWatchState], Inbox[testEffect])
 	thinkHits atomic.Int64
 	applyHits atomic.Int64
 }
 
 func (l *testLogic) ID() uint64 { return l.id }
 
-func (l *testLogic) Think(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+func (l *testLogic) Think(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 	l.thinkHits.Add(1)
 	if l.thinkFn != nil {
 		return l.thinkFn(ctx, inbox)
@@ -79,17 +99,17 @@ func (l *testLogic) Think(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbo
 	return 0
 }
 
-func (l *testLogic) Apply(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+func (l *testLogic) Apply(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 	l.applyHits.Add(1)
 	if l.applyFn != nil {
 		l.applyFn(ctx, arr)
 	}
 }
 
-type testScheduler = Scheduler[testWorld, testSignal, testEffect, *testLogic]
+type testScheduler = Scheduler[testWorld, testSignal, testEffect, *testLogic, testWatchState]
 
 func newTestScheduler(meta ScheduleMeta, w testWorld) *testScheduler {
-	return NewScheduler[testWorld, testSignal, testEffect, *testLogic](meta, w)
+	return NewScheduler[testWorld, testSignal, testEffect, *testLogic, testWatchState](meta, w)
 }
 
 func defaultMeta() ScheduleMeta {
@@ -128,7 +148,7 @@ func TestSchedulerExternalSignalTriggersThink(t *testing.T) {
 	var receivedSignals []int
 	logic := &testLogic{
 		id: 42,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			for i := 0; i < inbox.Len(); i++ {
 				receivedSignals = append(receivedSignals, inbox.At(i).value)
 			}
@@ -168,7 +188,7 @@ func TestSchedulerTimerActivation(t *testing.T) {
 	thinkCount := int64(0)
 	logic := &testLogic{
 		id: 10,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			if thinkCount == 1 {
 				// First activation: register timer with delay=2
@@ -214,7 +234,7 @@ func TestSchedulerEffectDelivery(t *testing.T) {
 	var appliedEffects []int
 	source := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Publish(2, testEffect{value: 10})
 			ctx.Publish(2, testEffect{value: 20})
 			return 0
@@ -222,7 +242,7 @@ func TestSchedulerEffectDelivery(t *testing.T) {
 	}
 	target := &testLogic{
 		id: 2,
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := 0; i < arr.Len(); i++ {
 				appliedEffects = append(appliedEffects, arr.At(i).value)
 			}
@@ -259,7 +279,7 @@ func TestSchedulerSignalCascade(t *testing.T) {
 
 	logicA := &testLogic{
 		id: 100,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, 100)
 			ctx.Emit(200, testSignal{value: 1})
 			return 0
@@ -267,7 +287,7 @@ func TestSchedulerSignalCascade(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 200,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, 200)
 			ctx.Emit(300, testSignal{value: 2})
 			return 0
@@ -275,7 +295,7 @@ func TestSchedulerSignalCascade(t *testing.T) {
 	}
 	logicC := &testLogic{
 		id: 300,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, 300)
 			return 0
 		},
@@ -322,21 +342,21 @@ func TestSchedulerApplyEmitsSignal(t *testing.T) {
 
 	source := &testLogic{
 		id: 10,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Publish(20, testEffect{value: 42})
 			return 0
 		},
 	}
 	applier := &testLogic{
 		id: 20,
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			// Apply emits a signal to reactor
 			ctx.Emit(30, testSignal{value: 99})
 		},
 	}
 	reactor := &testLogic{
 		id: 30,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			reactorThinkCount++
 			if inbox.Len() == 0 {
 				t.Errorf("reactor got empty inbox, expected signal")
@@ -372,14 +392,14 @@ func TestSchedulerDeferOverflow(t *testing.T) {
 	// B's signal won't be consumed this tick → deferred to next tick.
 	logicA := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Emit(2, testSignal{value: 77})
 			return 0
 		},
 	}
 	logicB := &testLogic{
 		id: 2,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			return 0
 		},
@@ -414,11 +434,11 @@ func TestSchedulerSelfEffect(t *testing.T) {
 	var selfApplied []int
 	logic := &testLogic{
 		id: 50,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Publish(50, testEffect{value: 999})
 			return 0
 		},
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := 0; i < arr.Len(); i++ {
 				selfApplied = append(selfApplied, arr.At(i).value)
 			}
@@ -449,7 +469,7 @@ func TestSchedulerUnregisteredTargetDropped(t *testing.T) {
 
 	logic := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			// Publish effect to non-existent target
 			ctx.Publish(99999, testEffect{value: 1})
 			// Emit signal to non-existent target
@@ -482,7 +502,7 @@ func TestSchedulerTimerOverrideWithinTick(t *testing.T) {
 
 	logic := &testLogic{
 		id: 5,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkRound++
 			if thinkRound == 1 {
 				// First think: register delay=1 and emit signal to self
@@ -544,7 +564,7 @@ func TestSchedulerMultipleLogicsParallel(t *testing.T) {
 		id := uint64(i + 1)
 		logics[i] = &testLogic{
 			id: id,
-			thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 				// Each logic publishes an effect to the next logic (wrapping)
 				target := (id % numLogics) + 1
 				ctx.Publish(target, testEffect{value: int(id)})
@@ -622,7 +642,7 @@ func TestSchedulerTimerAndSignalSameLogic(t *testing.T) {
 
 	logic := &testLogic{
 		id: 7,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			if thinkCount == 1 {
 				return 1 // schedule for next tick
@@ -662,7 +682,7 @@ func TestSchedulerEffectsFromMultipleSources(t *testing.T) {
 
 	source1 := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Publish(3, testEffect{value: 10})
 			ctx.Publish(3, testEffect{value: 20})
 			return 0
@@ -670,14 +690,14 @@ func TestSchedulerEffectsFromMultipleSources(t *testing.T) {
 	}
 	source2 := &testLogic{
 		id: 2,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Publish(3, testEffect{value: 30})
 			return 0
 		},
 	}
 	target := &testLogic{
 		id: 3,
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := 0; i < arr.Len(); i++ {
 				appliedValues = append(appliedValues, arr.At(i).value)
 			}
@@ -739,7 +759,7 @@ func TestSchedulerRemovedLogicNotActivated(t *testing.T) {
 
 	logic := &testLogic{
 		id: 5,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			return 1 // register timer
 		},
 	}
@@ -779,7 +799,7 @@ func TestSchedulerMultipleTicksTimerRepeat(t *testing.T) {
 
 	logic := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			return 1 // always reschedule for next tick
 		},
@@ -844,7 +864,7 @@ func TestSchedulerConcurrentSafety(t *testing.T) {
 		id := uint64(i + 1)
 		logics[i] = &testLogic{
 			id: id,
-			thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 				// Emit signals and effects to various targets
 				ctx.Emit((id%uint64(N))+1, testSignal{value: int(id)})
 				ctx.Publish((id%uint64(N))+1, testEffect{value: int(id)})
@@ -882,7 +902,7 @@ func TestSchedulerMultipleThinkCallsPerSuperstep(t *testing.T) {
 	totalSignals := int64(0)
 	logic := &testLogic{
 		id: 7,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			atomic.AddInt64(&totalSignals, int64(inbox.Len()))
 			return 1 // register timer for next tick
 		},
@@ -918,7 +938,7 @@ func TestSchedulerDoubleBufferDefer(t *testing.T) {
 	// A → B → C chain, but MaxSupersteps=1 so only A runs in tick 1
 	logicA := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			atomic.AddInt64(&chainLen, 1)
 			ctx.Emit(2, testSignal{value: 1})
 			return 0
@@ -926,7 +946,7 @@ func TestSchedulerDoubleBufferDefer(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 2,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			atomic.AddInt64(&chainLen, 1)
 			ctx.Emit(3, testSignal{value: 2})
 			return 0
@@ -934,7 +954,7 @@ func TestSchedulerDoubleBufferDefer(t *testing.T) {
 	}
 	logicC := &testLogic{
 		id: 3,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			atomic.AddInt64(&chainLen, 1)
 			return 0
 		},
@@ -980,7 +1000,7 @@ func TestSchedulerEffectOrderDeterministic(t *testing.T) {
 
 	producer := &testLogic{
 		id: 100,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			// Publish effects with different Order values in non-sorted order.
 			ctx.Publish(200, testEffect{kind: 1, value: 1, order: 30})
 			ctx.Publish(200, testEffect{kind: 1, value: 2, order: 10})
@@ -990,7 +1010,7 @@ func TestSchedulerEffectOrderDeterministic(t *testing.T) {
 	}
 	consumer := &testLogic{
 		id: 200,
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := range arr.Len() {
 				received = append(received, arr.At(i).order)
 			}
@@ -1026,7 +1046,7 @@ func TestSchedulerSignalOrderDeterministic(t *testing.T) {
 
 	producer := &testLogic{
 		id: 100,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			// Emit signals with different Order values in non-sorted order.
 			ctx.Emit(200, testSignal{kind: 1, value: 1, order: 30})
 			ctx.Emit(200, testSignal{kind: 1, value: 2, order: 10})
@@ -1036,7 +1056,7 @@ func TestSchedulerSignalOrderDeterministic(t *testing.T) {
 	}
 	consumer := &testLogic{
 		id: 200,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			for i := range inbox.Len() {
 				received = append(received, inbox.At(i).order)
 			}
@@ -1087,7 +1107,7 @@ func TestSchedulerSerialBasicSignal(t *testing.T) {
 	var receivedSignals []int
 	logic := &testLogic{
 		id: 42,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			for i := 0; i < inbox.Len(); i++ {
 				receivedSignals = append(receivedSignals, inbox.At(i).value)
 			}
@@ -1126,7 +1146,7 @@ func TestSchedulerSerialInlineExecution(t *testing.T) {
 
 	logicA := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, "A.Think.start")
 			ctx.Publish(2, testEffect{value: 1})
 			order = append(order, "A.Think.afterPublish")
@@ -1137,13 +1157,13 @@ func TestSchedulerSerialInlineExecution(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 2,
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			order = append(order, "B.Apply")
 		},
 	}
 	logicC := &testLogic{
 		id: 3,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, "C.Think")
 			return 0
 		},
@@ -1191,7 +1211,7 @@ func TestSchedulerSerialSignalCascade(t *testing.T) {
 
 	logicA := &testLogic{
 		id: 100,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, 100)
 			ctx.Emit(200, testSignal{value: 1})
 			return 0
@@ -1199,7 +1219,7 @@ func TestSchedulerSerialSignalCascade(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 200,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, 200)
 			ctx.Emit(300, testSignal{value: 2})
 			return 0
@@ -1207,7 +1227,7 @@ func TestSchedulerSerialSignalCascade(t *testing.T) {
 	}
 	logicC := &testLogic{
 		id: 300,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, 300)
 			return 0
 		},
@@ -1248,7 +1268,7 @@ func TestSchedulerSerialDepthLimit(t *testing.T) {
 	//   depth-- → 0
 	logicA := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkOrder = append(thinkOrder, 1)
 			ctx.Emit(2, testSignal{value: 1})
 			return 0
@@ -1256,7 +1276,7 @@ func TestSchedulerSerialDepthLimit(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 2,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkOrder = append(thinkOrder, 2)
 			ctx.Emit(3, testSignal{value: 2})
 			return 0
@@ -1264,7 +1284,7 @@ func TestSchedulerSerialDepthLimit(t *testing.T) {
 	}
 	logicC := &testLogic{
 		id: 3,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkOrder = append(thinkOrder, 3)
 			return 0
 		},
@@ -1309,7 +1329,7 @@ func TestSchedulerSerialApplyEmitCascade(t *testing.T) {
 
 	source := &testLogic{
 		id: 10,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, "source.Think")
 			ctx.Publish(20, testEffect{value: 42})
 			return 0
@@ -1317,14 +1337,14 @@ func TestSchedulerSerialApplyEmitCascade(t *testing.T) {
 	}
 	applier := &testLogic{
 		id: 20,
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			order = append(order, "applier.Apply")
 			ctx.Emit(30, testSignal{value: 99})
 		},
 	}
 	reactor := &testLogic{
 		id: 30,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, "reactor.Think")
 			if inbox.Len() != 1 || inbox.At(0).value != 99 {
 				t.Errorf("reactor got inbox len=%d, want 1 with value 99", inbox.Len())
@@ -1362,7 +1382,7 @@ func TestSchedulerSerialTimerActivation(t *testing.T) {
 	thinkCount := int64(0)
 	logic := &testLogic{
 		id: 10,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			if thinkCount == 1 {
 				return 2 // register timer with delay=2
@@ -1405,13 +1425,13 @@ func TestSchedulerSerialSelfEffect(t *testing.T) {
 	var order []string
 	logic := &testLogic{
 		id: 50,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			order = append(order, "Think")
 			ctx.Publish(50, testEffect{value: 999})
 			order = append(order, "Think.afterPublish")
 			return 0
 		},
-		applyFn: func(ctx *CommitCtx[testWorld, testSignal], arr Arrangement[testEffect]) {
+		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
 			order = append(order, "Apply")
 			if arr.Len() != 1 || arr.At(0).value != 999 {
 				t.Errorf("self-apply got %d effects, want 1 with value 999", arr.Len())
@@ -1444,7 +1464,7 @@ func TestSchedulerSerialUnregisteredTarget(t *testing.T) {
 
 	logic := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			ctx.Publish(99999, testEffect{value: 1})
 			ctx.Emit(88888, testSignal{value: 2})
 			return 0
@@ -1475,7 +1495,7 @@ func TestSchedulerSerialDeferToNextTick(t *testing.T) {
 	// A → B → C chain, but maxDepth=1 so only A runs in tick 1.
 	logicA := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			chainLen++
 			ctx.Emit(2, testSignal{value: 1})
 			return 0
@@ -1483,7 +1503,7 @@ func TestSchedulerSerialDeferToNextTick(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 2,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			chainLen++
 			ctx.Emit(3, testSignal{value: 2})
 			return 0
@@ -1491,7 +1511,7 @@ func TestSchedulerSerialDeferToNextTick(t *testing.T) {
 	}
 	logicC := &testLogic{
 		id: 3,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			chainLen++
 			return 0
 		},
@@ -1532,7 +1552,7 @@ func TestSchedulerSerialTimerReregistration(t *testing.T) {
 	thinkCount := int64(0)
 	logic := &testLogic{
 		id: 1,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			return 1 // always reschedule for next tick
 		},
@@ -1574,7 +1594,7 @@ func TestSchedulerParallelToSerial(t *testing.T) {
 		id := uint64(i)
 		logic := &testLogic{id: id}
 		if id == 1 {
-			logic.thinkFn = func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			logic.thinkFn = func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 				ctx.Emit(99, testSignal{value: 1})
 				return 0
 			}
@@ -1585,7 +1605,7 @@ func TestSchedulerParallelToSerial(t *testing.T) {
 
 	reactor := &testLogic{
 		id: 99,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			atomic.AddInt64(&reactorThinkCount, 1)
 			return 0
 		},
@@ -1625,7 +1645,7 @@ func TestSchedulerSerialDepthBudgetShared(t *testing.T) {
 		id := uint64(i)
 		logic := &testLogic{id: id}
 		if id == 1 {
-			logic.thinkFn = func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+			logic.thinkFn = func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 				ctx.Emit(101, testSignal{value: 1})
 				return 0
 			}
@@ -1636,7 +1656,7 @@ func TestSchedulerSerialDepthBudgetShared(t *testing.T) {
 
 	chainA := &testLogic{
 		id: 101,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			serialChain = append(serialChain, 101)
 			ctx.Emit(102, testSignal{value: 2})
 			return 0
@@ -1644,7 +1664,7 @@ func TestSchedulerSerialDepthBudgetShared(t *testing.T) {
 	}
 	chainB := &testLogic{
 		id: 102,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			serialChain = append(serialChain, 102)
 			return 0
 		},
@@ -1706,7 +1726,7 @@ func TestSchedulerSerialSelfSignal(t *testing.T) {
 	thinkCount := int64(0)
 	logic := &testLogic{
 		id: 7,
-		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect], inbox Inbox[testSignal]) int64 {
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
 			thinkCount++
 			// Always re-emit to self → depth-limited recursion
 			ctx.Emit(7, testSignal{value: int(thinkCount)})

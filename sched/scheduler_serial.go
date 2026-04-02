@@ -16,7 +16,7 @@ package sched
 //     Think on the target logic. Recursive: Think's Emit/Publish may trigger
 //     further thinkSignal/applyOne calls inline.
 //   - thinkTimer(ref): calls Think with an empty Inbox (timer-only activation).
-//   - applyOne(ref, eff): wraps eff into a single-element Arrangement, calls
+//   - applyOne(ref, eff): wraps eff into a single-element Inbox, calls
 //     Apply on the target logic. Apply's Emit may trigger thinkSignal inline.
 //
 // Depth control:
@@ -33,7 +33,7 @@ package sched
 //
 // After serialProcess returns, caller must swap signal buffers to preserve
 // deferred signals in signalRead for the next tick.
-func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxDepth int) {
+func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, maxDepth int) {
 	depth := 0
 	bs := uint64(sc.meta.BlockSize)
 
@@ -45,10 +45,15 @@ func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxD
 	var thinkTimer func(uint64)
 	var applyOne func(uint64, E)
 
+	// thinkRef tracks the refId of the logic currently executing Think.
+	// Captured by reference in the SetWatch closure so that watch updates
+	// are associated with the correct logic.
+	var thinkRef uint64
+
 	// ThinkCtx and CommitCtx are created once and reused across all
 	// recursive calls. Their Emit/Publish closures are set below.
-	thinkCtx := &ThinkCtx[W, S, E]{World: world}
-	commitCtx := &CommitCtx[W, S]{World: world}
+	thinkCtx := &ThinkCtx[W, S, E, WS]{World: world}
+	commitCtx := &CommitCtx[WorldView[WS], S, WS]{World: world.GetWorldView()}
 
 	// applyOne finds the target logic and calls Apply with a single effect.
 	// Apply does NOT increment depth — Think→Publish→Apply is one atomic
@@ -59,7 +64,7 @@ func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxD
 		if !ok {
 			return
 		}
-		logic.Apply(commitCtx, sliceArrangement[E]{eff})
+		logic.Apply(commitCtx, sliceInbox[E]{eff})
 	}
 
 	// thinkSignal finds the target logic and calls Think with a single signal.
@@ -76,6 +81,7 @@ func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxD
 		if !ok {
 			return
 		}
+		thinkRef = ref
 		depth++
 		delay := logic.Think(thinkCtx, sliceInbox[S]{sig})
 		depth--
@@ -96,6 +102,7 @@ func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxD
 		if !ok {
 			return
 		}
+		thinkRef = ref
 		depth++
 		delay := logic.Think(thinkCtx, sliceInbox[S](nil))
 		depth--
@@ -108,6 +115,12 @@ func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxD
 	// Wire closures into contexts.
 	thinkCtx.Emit = thinkSignal
 	thinkCtx.Publish = applyOne
+	// Serial mode: SetWatch commits immediately (single-threaded, no race).
+	// This is consistent with serial mode's "truly inline" semantics where
+	// Apply also immediately modifies public state.
+	thinkCtx.SetWatch = func(ws WS) {
+		world.CommitWatches(sliceInbox[RefWatch[WS]]{RefWatch[WS]{thinkRef, ws}})
+	}
 	commitCtx.Emit = thinkSignal
 
 	// ── Process initial frontier ─────────────────────────────────────────

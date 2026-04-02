@@ -1,10 +1,11 @@
 # Memory
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
 
 ## Current Focus
 
 - **GDC 投稿准备阶段**：先行工作分析与价值评估已完成，进入 benchmark + demo 阶段。
+- **WatchState 机制已实现**：Logic 可声明感兴趣的 SignalKind，发射方可查询目标 watch 状态实现发射端过滤。并发模式 BSP 一致性延迟更新，串行模式即时更新。
 - 先行工作对比分析完成：7 篇用户提供的论文 + 12+ 近年工作全部分析，产出综合覆盖矩阵和新颖性结论。
 - GDC 发表价值评估完成：判定为 **Competitive**，目标系统填补了 GDC "服务器端 tick 并行化"的主题空白。
 - 下一步 P0 任务：性能 Benchmark + 端到端 combat path demo。
@@ -13,7 +14,18 @@ Last Updated: 2026-03-31
 
 ## Latest State
 
-- Scheduler 实现完成，代码在 `en/scheduler*.go`，35 个测试全部通过。
+- Scheduler 实现完成，代码在 `sched/scheduler*.go`，35 个测试全部通过。
+- **WatchState 实现完成**：
+  - `WatchState` 接口：`Interest(SignalKind) bool`，抽象底层实现（bitset/map/tree 等）
+  - `WorldView[WS]` 暴露 `WatchOf(uint64) WS`，Logic 可在 Think/Apply 中查询其他 Logic 的 watch 状态
+  - `World[WS]` 扩展 `WorldView[WS]`，增加 `GetWorldView() WorldView[WS]`；ThinkCtx 持有 `World`，CommitCtx 持有 `WorldView`
+  - `ThinkCtx.SetWatch func(WS)`：Logic 在 Think 中声明兴趣，不通过返回值传递（避免零值歧义）
+  - 并发模式：per-thread `watchCollectors` → Think barrier 后 `commitWatches` 批量提交（BSP 一致性）
+  - 串行模式：`SetWatch` 立即调用 `world.CommitWatches`（truly inline 语义一致）
+  - 默认无 watch：未调用 `SetWatch` 的 Logic 不接收 signal
+  - `WatchCommitter` 接口：`CommitWatches(Inbox[RefWatch[WS]])`，由 World 实现批量 watch 提交
+  - Arrangement 概念已移除：Apply 统一使用 `Inbox[E]`，`sliceInbox` 和 `refValInbox` 泛化为 `any` 约束
+  - Scheduler 现有 5 个类型参数：`Scheduler[W, S, E, L, WS]`
 - 适配性调研全部完成，适配分类指导手册已完成：`docs/design/adaptation_guide.md`
 - 旧 GAS 模式代码已归档为 `en/engine_bak.go`（全部注释掉），与新模型无冲突。
 - **GDC 先行工作分析已完成**，产出文件：
@@ -110,9 +122,22 @@ Last Updated: 2026-03-31
 ### Serial 模式设计决策
 
 - **Truly inline**（非 collect-then-cascade）：Publish/Emit 原地触发 Apply/Think，不做 Think 输出的中间收集。
-- **Apply 粒度差异已确认接受**：serial 模式下 Apply 每次收到单个 effect（vs parallel 模式的批量 Arrangement）。
+- **Apply 粒度差异已确认接受**：serial 模式下 Apply 每次收到单个 effect（vs parallel 模式的批量 Inbox）。
 - **Logic 接口不变**：Serial/parallel 对 Logic 实现完全透明。
 - **Depth 用栈变量追踪**：不嵌入 signal/effect 值，避免膨胀 parallel 路径的 refVal 结构体。
+
+### WatchState 设计决策
+
+- **WatchState 接口**：`Interest(SignalKind) bool`——抽象实现，不规定底层数据结构。
+- **WorldView 暴露 WatchOf**：`WatchOf(uint64) WS` 允许 Logic 在 Think/Apply 中查询目标 watch 状态。
+- **World vs WorldView 分层**：`World[WS]` 扩展 `WorldView[WS]`，增加 `GetWorldView()`。ThinkCtx 持有 `World`（完整访问），CommitCtx 持有 `WorldView`（只读访问）。
+- **SetWatch 在 ThinkCtx 上**：Logic 调用 `ctx.SetWatch(ws)` 声明兴趣。不通过 Think 返回值传递——避免零值歧义，使 watch 更新可选。
+- **BSP 一致性延迟更新（并发）**：per-thread watchCollectors → Think barrier 后 commitWatches → Apply 和下一轮 Think 看到更新 snapshot。
+- **即时更新（串行）**：`SetWatch` 立即调用 `world.CommitWatches`（与串行模式 truly inline 语义一致）。
+- **默认无 watch**：未调用 `SetWatch` 的 Logic 不接收 signal（必须显式声明兴趣）。
+- **WatchCommitter 接口**：`CommitWatches(Inbox[RefWatch[WS]])`——World 实现批量 watch 提交。
+- **Arrangement 已移除**：Apply 统一使用 `Inbox[E]`。`sliceInbox` 和 `refValInbox` 约束从 `SignalI` 泛化为 `any`。
+- **Scheduler 5 个类型参数**：`Scheduler[W, S, E, L, WS]`。
 
 ### Scheduler 并发模型
 
@@ -134,19 +159,20 @@ Last Updated: 2026-03-31
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
 - Worker pool 替代每 superstep 创建 goroutine（代码中已有 TODO 标注）。
 - Prior art 补充搜索：Redmond OOPSLA 2025 的 related work 引用链、NetGames/FDG/I3D 会议、中文学术数据库。
+- WatchState 实现选择：默认提供 bitset 实现还是由用户自行实现？是否需要框架级标准实现。
 
 ## Relevant Files
 
 - `AGENTS.md`
-- `en/world.go`
-- `en/scheduler.go`
-- `en/scheduler_parallel.go`
-- `en/scheduler_serial.go`
-- `en/scheduler_test.go`
-- `en/wheel.go`
-- `en/wheel_test.go`
-- `en/block_collector.go`
-- `en/utils.go`
+- `sched/world.go`
+- `sched/scheduler.go`
+- `sched/scheduler_parallel.go`
+- `sched/scheduler_serial.go`
+- `sched/scheduler_test.go`
+- `sched/wheel.go`
+- `sched/wheel_test.go`
+- `sched/block_collector.go`
+- `sched/utils.go`
 - `docs/design/parallel.md`
 - `docs/design/scheduler.md`
 - `docs/design/adaptation_guide.md`（适配分类指导手册）

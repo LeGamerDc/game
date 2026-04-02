@@ -1,6 +1,6 @@
 # Tasks
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
 
 ## Active
 
@@ -31,6 +31,7 @@ Last Updated: 2026-03-31
 
 ## Done
 
+- [x] WatchState 机制实现：Logic 声明感兴趣的 SignalKind，发射方可查询目标 watch 状态实现发射端过滤。`WatchState` 接口 + `WorldView.WatchOf` 查询 + `ThinkCtx.SetWatch` 声明 + BSP 一致性延迟更新（并发）/ 即时更新（串行）+ `WatchCommitter` 批量提交 + Arrangement 移除（Apply 统一使用 `Inbox[E]`）+ Scheduler 5 类型参数。代码文件：`sched/world.go`、`sched/scheduler.go`、`sched/scheduler_parallel.go`、`sched/scheduler_serial.go`、`sched/utils.go`、`sched/scheduler_test.go`（35 个测试全部通过） (2026-04-01)
 - [x] 2015-2025 Prior Art & Novelty Analysis：搜索 7 个方向（游戏服务器并行化、ECS 并行执行、并行仿真、ownership 模型、Quake 后续、引擎并发架构、工业实践），分析 12+ 工作，结论：无实质新颖性威胁；Redmond OOPSLA 2025 和 SpatialOS 需重点 position；产出 `docs/references/prior_art_novelty_analysis.md` (2025-07)
 - [x] 审计问题回顾与清理：10 个审计问题中 7 个已解决或确认不改，3 个确认为有意设计或已由现有机制覆盖；清理 Active/Backlog/Blocked 中的过时条目 (2026-03-31)
 - [x] 适配性分类指导手册：基于 107 条逻辑链路（30 经典技能 + 77 OpMap 业务）提炼 6 大底层原理分类（A/B1-B4/C/D/E/F），产出 `docs/design/adaptation_guide.md` (2025-07-28)
