@@ -1,60 +1,25 @@
 # Todo — 当前任务执行清单
 
-Last Updated: 2026-04-01
+Last Updated: 2026-04-03
 
-## 最近完成：WatchState 机制实现
-
-### 已完成步骤
-
-- [x] 设计 WatchState 接口：`Interest(SignalKind) bool`，抽象底层实现
-- [x] WorldView 暴露 `WatchOf(uint64) WS` 查询接口
-- [x] World vs WorldView 分层：`World[WS]` 扩展 `WorldView[WS]`，增加 `GetWorldView()`
-- [x] ThinkCtx 增加 `SetWatch func(WS)` 字段，Logic 在 Think 中声明兴趣
-- [x] CommitCtx 使用 `WorldView[WS]`（只读访问）
-- [x] 并发模式：per-thread watchCollectors → Think barrier 后 commitWatches 批量提交（BSP 一致性）
-- [x] 串行模式：SetWatch 立即调用 `world.CommitWatches`（truly inline 语义一致）
-- [x] 默认无 watch：未调用 SetWatch 的 Logic 不接收 signal
-- [x] WatchCommitter 接口：`CommitWatches(Inbox[RefWatch[WS]])`，World 实现批量提交
-- [x] Arrangement 移除：Apply 统一使用 `Inbox[E]`，`sliceInbox`/`refValInbox` 泛化为 `any`
-- [x] Scheduler 5 类型参数：`Scheduler[W, S, E, L, WS]`
-- [x] 35 个测试全部通过
-- [x] 更新设计文档：`scheduler.md`、`parallel.md`、`memory.md`、`tasks.md`、`todo.md`
-
-## 当前任务：GDC 投稿准备 — 先行工作分析与价值评估
+## 最近完成：Signal/Effect 代数化调研
 
 ### 已完成步骤
 
 - [x] 读取 memory 文件，了解项目上下文
-- [x] 读取设计文档（parallel.md, scheduler.md, adaptation_guide.md, world.go）
-- [x] 分析用户提供的 7 篇先行工作论文（Cordeiro 2007, Abdelkhalek 2004, Atomic Quake 2009, QuakeTM 2009, SynQuake 2010, Mohebali 2014, Zamith 2015）
-- [x] 搜索 2015–2025 年间的新相关工作（Redmond OOPSLA 2025, SpacetimeDB, SpatialOS, Unity DOTS, Bevy, UE5 等）
-- [x] 调研 GDC Programming/Technology Track 历史同类演讲
-- [x] 产出综合覆盖矩阵：10 个核心特征 × 12+ 已知工作
-- [x] 产出新颖性结论：10 项新颖贡献，0 项被完整覆盖
-- [x] 产出 GDC 发表价值评估：Competitive，填补主题空白
-- [x] 产出建议的 Related Work 叙事结构和 GDC 提交策略
-- [x] 生成分析文档 `docs/papers/novelty_and_value_analysis.md`
-- [x] 生成详细先行工作分析 `docs/references/prior_work_analysis.md`
-- [x] 生成近年新工作分析 `docs/references/prior_art_novelty_analysis.md`
+- [x] 读取 signal/effect 相关代码：world.go、scheduler.go、scheduler_parallel.go、scheduler_serial.go
+- [x] 读取设计文档：parallel.md、scheduler.md 的 signal/effect 相关章节
+- [x] 调研 Signal 代数化：游戏引擎事件合并模式、代数结构（monoid/semilattice/group/CRDT）、FRP 事件流代数
+- [x] 调研 Rx operator 代数语义、Event Sourcing compaction、Actor Model 消息批量、Process Algebra 事件组合
+- [x] 调研 Effect 代数组合在实际游戏中的使用情况：Unreal GAS、Overwatch、SpacetimeDB、Bevy、Unity DOTS
+- [x] 确认结论：Effect/Signal 代数组合（框架级预合并）不做
+- [x] 澄清 F4 commutativity 精确含义：容忍性，非数学严格交换律
+- [x] 更新设计文档 parallel.md
+- [x] 更新 memory 文件
 
-### 待完成步骤
+## 当前无活跃任务
 
-- [ ] 补充搜索已知盲点（中文学术文献、专利库、NetGames/FDG/I3D 会议）
-- [ ] 检查 Redmond OOPSLA 2025 论文的 Related Work 部分，追踪引用链
-- [ ] 设计并实现性能 Benchmark（串行 vs 并行 vs 自适应，不同 entity 数量）
-- [ ] 构建至少一个完整 combat path 的端到端 demo
-- [ ] 与简单方案（单线程串行、goroutine-per-entity）的对比实验
-
-## Notes
-
-### 新颖性核心结论
-- 7 篇先行工作 + 12+ 近年工作全部分析完毕
-- 最高威胁：SynQuake 2010（2.5/5），stage-based + barrier 但无 ownership/effect 代数
-- 需重点 position：Cordeiro 2007（概念先驱）、Redmond OOPSLA 2025（同期不同路径）
-- F3（ownership）、F4（effect 代数）、F5（串/并自适应）、F9（107 条验证）、F10（适配方法论）完全无先例
-
-### GDC 价值核心结论
-- GDC 2027 track 已从 "Programming" 改名为 "Game & Production Technology"
-- 服务器端 tick 并行化在 GDC 历史上是主题空白
-- SpacetimeDB (GDC 2025) 是最近的服务器端并发演讲，但走数据库事务路径
-- P0 差距：benchmark + 端到端 demo
+下一步可选方向（参见 tasks.md Active）：
+- 性能 Benchmark
+- 端到端 Combat Path Demo
+- GDC 投稿准备

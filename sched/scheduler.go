@@ -126,9 +126,6 @@ type Scheduler[W interface {
 	// CacheLinePad 隔离保证并行写入无 false sharing。
 	watchCollectors []collectBuf[RefWatch[WS]]
 
-	// watchCommitBuf: 预分配的 flatten 缓冲，避免每次 commitWatches 分配。
-	watchCommitBuf []RefWatch[WS]
-
 	// ── 预分配计算缓冲 ──────────────────────────────────────────────
 	blockLoads  []blockLoad // computeApplyAssignment 用
 	threadLoads []int       // computeApplyAssignment 用
@@ -382,12 +379,8 @@ func (sc *Scheduler[W, S, E, L, WS]) resetEffectCollectors() {
 //
 // 串行模式下 SetWatch 即时生效（单线程无竞争），不经过此方法。
 func (sc *Scheduler[W, S, E, L, WS]) commitWatches(world W) {
-	sc.watchCommitBuf = sc.watchCommitBuf[:0]
 	for t := range sc.meta.Concurrency {
-		sc.watchCommitBuf = append(sc.watchCommitBuf, sc.watchCollectors[t].buf...)
+		world.CommitWatches(sliceInbox[RefWatch[WS]](sc.watchCollectors[t].buf))
 		sc.watchCollectors[t].buf = sc.watchCollectors[t].buf[:0]
-	}
-	if len(sc.watchCommitBuf) > 0 {
-		world.CommitWatches(sliceInbox[RefWatch[WS]](sc.watchCommitBuf))
 	}
 }

@@ -1,6 +1,6 @@
 # Memory
 
-Last Updated: 2026-04-01
+Last Updated: 2026-04-03
 
 ## Current Focus
 
@@ -11,6 +11,7 @@ Last Updated: 2026-04-01
 - 下一步 P0 任务：性能 Benchmark + 端到端 combat path demo。
 - GDC 2027 (March 1-5, 2027) 的 Call for Submissions 预计 2026 年 7-9 月开放。
 - **2015-2025 Prior Art & Novelty Analysis 已完成**：搜索 7 个方向、分析 12+ 工作，结论为无实质新颖性威胁。
+- Signal/Effect 代数组合调研已完成，结论为"确认不做"。
 
 ## Latest State
 
@@ -108,7 +109,7 @@ Last Updated: 2026-04-01
 3. **IsSerialRef >= RefWorld**：有意设计。Serial ref 使用 >= RefWorld 的地址空间，RefWorld 本身也是 serial 的一种。三类 ref 不是互斥分区，而是 normal (< RefWorld) vs serial (>= RefWorld)，其中 RefWorld 是 serial 的特殊成员。
 4. **Publish 不区分 Entity/World Effect**：确认不改。单一 `Publish(ref, effect)` 足够，路由完全由 target ref 决定。
 5. **Signal/Effect 无 source ref**：确认由用户 payload 自行携带。
-6. **Effect 代数元数据**：确认不需要。Order() 提供了更通用的排序机制，实践中不太可能出现 effect/signal 合并需求。
+6. **Effect 代数元数据**：确认不需要。实践中 effect/signal 不可合并（每次 effect 必须独立处理），且"顺序无关"是容忍性而非严格一致性，shuffle 验证不适用。详见代数化调研结论。
 7. **Think 激活类型不分类**：确认不改。Inbox 空 = timer/frontier，非空 = signal。
 8. **Apply→Emit 合法**：已通过 MaxSupersteps（parallel）和 maxDepth（serial）防护。
 9. **Apply 无返回值**：确认不改。
@@ -139,6 +140,15 @@ Last Updated: 2026-04-01
 - **Arrangement 已移除**：Apply 统一使用 `Inbox[E]`。`sliceInbox` 和 `refValInbox` 约束从 `SignalI` 泛化为 `any`。
 - **Scheduler 5 个类型参数**：`Scheduler[W, S, E, L, WS]`。
 
+### Signal/Effect 代数化调研结论（已确认关闭）
+
+- **Effect/Signal 代数组合（框架级预合并）确认不做**：覆盖 Unreal GAS、Overwatch ECS、SpacetimeDB、Bevy、Unity DOTS 等所有主流引擎/框架，无一做框架级 effect 合并。
+- **Commutativity ≠ Mergeability**：交换律（顺序无关）和可合并性是完全不同的概念。Effect 可交换不意味着可合并——每次 effect 必须独立产出视觉反馈、独立触发后续效果、独立携带来源信息。
+- **F4 "typed effect commutativity" 的精确含义**：不是数学严格交换律（不要求不同顺序产出完全相同结果），而是开发者和玩家对不同顺序的处理结果保持**容忍**。这是并发 scheduler 能工作的核心前提。
+- **Shuffle 验证不适用**：因为"顺序无关"是容忍性而非一致性，不同顺序本就可能产出不同中间结果，shuffle 测试无法判定正确性。
+- **WatchState 已覆盖最高价值优化**：发射端过滤远优于投递端合并。
+- **调研产出文件**：`docs/references/signal_algebra_research.md`、`docs/references/signal_event_algebra_research.md`。
+
 ### Scheduler 并发模型
 
 - Think 阈值 500、并发 worker 5、最多 3 轮 superstep。参数统一放入 `ScheduleMeta`。
@@ -154,7 +164,6 @@ Last Updated: 2026-04-01
 - **GDC 投稿**：检查 Redmond OOPSLA 2025 论文的 Related Work 引用链。
 - 是否选取 1-2 个妥协技能（如 Meepo 联动死亡、Guardian Spirit 死亡替代）做端到端原型验证。
 - 是否将适配性分析扩展到非战斗系统（交易、社交、副本机制）以验证 P5 资源交换模式。
-- Effect 分类扫描工具的具体 API 设计（C6 两阶段扫描模式）。
 - 空间查询 API 的版本化语义如何在 WorldView 中体现。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
 - Worker pool 替代每 superstep 创建 goroutine（代码中已有 TODO 标注）。

@@ -242,16 +242,22 @@ Apply 应当小而稳定，主要负责把 effect 提交到自己的公共状态
 2. 拆成多轮/多 tick 的显式协议（其次）
 3. 进入特殊的串行域 serial island（最后手段）
 
-### 未来可选: effect 代数元数据
+### "顺序无关"的含义
 
-当前版本中，effect 的归约逻辑完全由 Logic 的 Apply 实现者自己负责。框架不需要知道 effect 的代数性质。
+框架要求的"顺序无关"不是数学意义上的严格交换律——即不要求 `apply(s, [e1,e2])` 与 `apply(s, [e2,e1])` 产出完全相同的结果。实际含义是：开发者和玩家对不同顺序的 effect 处理结果保持**容忍**。
 
-未来如果需要以下能力，可以考虑为 effect 类型补充代数元数据（sum/max/min/set-add/replace-if/exclusive 等）:
+这是并发 scheduler 能工作的核心前提：不同 thread 上 effect 到达顺序不同，但玩法语义上任何一种顺序都是可接受的。
 
-- 测试时 shuffle 验证: 对同一批 effect 随机打乱顺序跑两次 Apply，检查结果是否一致，用于发现隐式顺序依赖
-- 调度器预合并: 框架在 Apply 前对同类 effect 做聚合，减少 Apply 工作量
+例如：同 tick 收到两次伤害（10 和 20），先扣 10 再扣 20 与先扣 20 再扣 10 可能在中间状态产生差异（如触发不同的 on-hit 效果），但最终结果对玩家而言都是合理的。这种容忍度就是我们所依赖的全部——不需要更强的代数性质。
 
-这不是当前的必需项，作为优化和检测的扩展点保留。
+### 关于 Effect/Signal 代数组合（已确认不做）
+
+Effect/Signal 的代数组合（即框架在 Apply/Think 前将同类 effect/signal 预合并）已经过调研确认不做。原因：
+
+1. **行业无先例**：Unreal GAS、Overwatch ECS、SpacetimeDB、Bevy、Unity DOTS 等所有已知游戏引擎/框架均不做框架级 effect 合并。
+2. **Commutativity ≠ Mergeability**：两次伤害虽然顺序无关，但绝不能合并——每次伤害必须独立产出视觉反馈（伤害跳字）、独立触发后续效果（buff/skill proc、死亡判定）、独立携带来源信息（助攻、仇恨）。
+3. **WatchState 已覆盖最高价值优化**：发射端过滤远优于投递端合并。
+4. **Shuffle 验证不适用**：因为"顺序无关"是容忍性而非一致性，不同顺序本就可能产出不同中间结果，shuffle 测试无法判定正确性。
 
 ## Signal 的设计边界
 
