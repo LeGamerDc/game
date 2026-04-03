@@ -30,6 +30,7 @@ Last Updated: 2026-04-03
 
 ## Done
 
+- [x] tag.Query 编译态优化：新增 `NewQuery(db, all, none, some)` 构造路径，在构造期完成层级归一化、冲突检测与冗余消除；`Match` 改为基于单 slice + boundary + kind mask 的运行时分派；补充 hierarchy/invalid/impossible/some-satisfied-by-all 测试并同步 README (2026-04-03)
 - [x] Signal/Effect 代数化调研：覆盖 Unreal GAS、Overwatch ECS、SpacetimeDB、Bevy 等主流引擎，确认无一做框架级 effect/signal 合并；澄清 F4 commutativity 含义为"容忍性"而非数学严格交换律；确认 Commutativity ≠ Mergeability；关闭代数合并方向。产出 `docs/references/signal_algebra_research.md`、`docs/references/signal_event_algebra_research.md` (2026-04-03)
 - [x] WatchState 机制实现：Logic 声明感兴趣的 SignalKind，发射方可查询目标 watch 状态实现发射端过滤。`WatchState` 接口 + `WorldView.WatchOf` 查询 + `ThinkCtx.SetWatch` 声明 + BSP 一致性延迟更新（并发）/ 即时更新（串行）+ `WatchCommitter` 批量提交 + Arrangement 移除（Apply 统一使用 `Inbox[E]`）+ Scheduler 5 类型参数。代码文件：`sched/world.go`、`sched/scheduler.go`、`sched/scheduler_parallel.go`、`sched/scheduler_serial.go`、`sched/utils.go`、`sched/scheduler_test.go`（35 个测试全部通过） (2026-04-01)
 - [x] 2015-2025 Prior Art & Novelty Analysis：搜索 7 个方向（游戏服务器并行化、ECS 并行执行、并行仿真、ownership 模型、Quake 后续、引擎并发架构、工业实践），分析 12+ 工作，结论：无实质新颖性威胁；Redmond OOPSLA 2025 和 SpatialOS 需重点 position；产出 `docs/references/prior_art_novelty_analysis.md` (2025-07)

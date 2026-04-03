@@ -22,30 +22,31 @@ abcid := db.Compile("a.b.c")
 var t tag.Tag
 
 // 添加最细粒度的标签即可，祖先会自动生效（HasTag 对 a、a.b、a.b.c 都为 true）
-t.AddTag(abcid, db)
+t.AddTag(db, abcid)
 
 _ = t.HasTag(aid)   // true
 _ = t.HasTag(abid)  // true
 _ = t.HasTag(abcid) // true
 
 // 匹配：all/none/some 组合
-q := tag.Query{ // 同包可直接构造（字段为非导出）
-    all:  []int16{abid},   // 必须包含 a.b
-    none: []int16{},
-    some: []int16{},
-}
+q := tag.NewQuery(
+    db,
+    []int16{abid}, // 必须包含 a.b
+    nil,
+    nil,
+)
 _ = t.Match(q) // true
 
 // 计数移除：多次 Add 后需对应 Remove 到 0 才会从缓存剔除
-t.RemoveTag(abcid, db)
+t.RemoveTag(db, abcid)
 ```
 
 ### 匹配规则说明
 - 缓存包含“自身及所有祖先”，因此拥有 `a.b.c` 等价于同时拥有 `a.b` 与 `a`。
 - 只拥有父级不代表拥有子级：若仅添加 `x`，则 `x.y` 不被视为命中。
+- `NewQuery` 会在构造期做归一化：`all` 保留最具体的条件，`none`/`some` 保留最宽的条件，并提前消除明显冲突。
 - `Match` 逻辑：
   1. 若有任意 `all` 不命中 => false
   2. 若有任意 `none` 命中 => false
   3. 若 `some` 非空 => 只要命中其中一个 => true；否则 false
   4. 若 `some` 为空且前两步未失败 => true
-

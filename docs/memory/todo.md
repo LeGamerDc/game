@@ -2,20 +2,18 @@
 
 Last Updated: 2026-04-03
 
-## 最近完成：Signal/Effect 代数化调研
+## 最近完成：tag.Query 编译态优化
 
 ### 已完成步骤
 
-- [x] 读取 memory 文件，了解项目上下文
-- [x] 读取 signal/effect 相关代码：world.go、scheduler.go、scheduler_parallel.go、scheduler_serial.go
-- [x] 读取设计文档：parallel.md、scheduler.md 的 signal/effect 相关章节
-- [x] 调研 Signal 代数化：游戏引擎事件合并模式、代数结构（monoid/semilattice/group/CRDT）、FRP 事件流代数
-- [x] 调研 Rx operator 代数语义、Event Sourcing compaction、Actor Model 消息批量、Process Algebra 事件组合
-- [x] 调研 Effect 代数组合在实际游戏中的使用情况：Unreal GAS、Overwatch、SpacetimeDB、Bevy、Unity DOTS
-- [x] 确认结论：Effect/Signal 代数组合（框架级预合并）不做
-- [x] 澄清 F4 commutativity 精确含义：容忍性，非数学严格交换律
-- [x] 更新设计文档 parallel.md
-- [x] 更新 memory 文件
+- [x] 读取 memory 文件，确认当前项目上下文与协作约定
+- [x] 读取 `tag/tag.go`、`tag/builder.go`、`tag/tag_test.go`、`tag/README.md`，确认 Query 语义与当前用法范围
+- [x] 讨论 Query 优化方向，确认先做“构造期编译 + 运行时轻量分派”，暂不引入 bitset 方案
+- [x] 实现 `NewQuery(db, all, none, some)`，在构造期完成 hierarchy 归一化、invalid tag 过滤、冲突检测与 `some` 冗余消除
+- [x] 重构 `Tag.Match`，改为基于单 slice + boundary + kind mask 的匹配路径
+- [x] 补充测试：hierarchy normalization、impossible query、`some` 被 `all` 保证、invalid tag
+- [x] 更新 `tag/README.md` 与 memory 文件
+- [x] 验证：`go test ./tag`、`go test ./...`
 
 ## 当前无活跃任务
 

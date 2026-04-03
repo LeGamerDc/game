@@ -53,24 +53,46 @@ func (t *Tag) HasTag(tag int16) bool {
 }
 
 func (t *Tag) Match(q Query) bool {
-	if slices.ContainsFunc(q.all, func(tag int16) bool {
-		return !t.HasTag(tag)
-	}) {
-		return false
-	}
-	if slices.ContainsFunc(q.none, func(tag int16) bool {
-		return t.HasTag(tag)
-	}) {
-		return false
-	}
-	if len(q.some) > 0 {
-		return slices.ContainsFunc(q.some, func(tag int16) bool {
-			return t.HasTag(tag)
-		})
+	switch q.kind {
+	case 0:
+		return true
+	case queryHasAll:
+		return t.matchAll(q.tags[:q.allEnd])
+	case queryHasNone:
+		return t.matchNone(q.tags[q.allEnd:q.noneEnd])
+	case queryHasSome:
+		return t.matchSome(q.tags[q.noneEnd:])
+	case queryHasAll | queryHasNone:
+		return t.matchAll(q.tags[:q.allEnd]) &&
+			t.matchNone(q.tags[q.allEnd:q.noneEnd])
+	case queryHasAll | queryHasSome:
+		return t.matchAll(q.tags[:q.allEnd]) &&
+			t.matchSome(q.tags[q.noneEnd:])
+	case queryHasNone | queryHasSome:
+		return t.matchNone(q.tags[q.allEnd:q.noneEnd]) &&
+			t.matchSome(q.tags[q.noneEnd:])
+	case queryHasAll | queryHasNone | queryHasSome:
+		return t.matchAll(q.tags[:q.allEnd]) &&
+			t.matchNone(q.tags[q.allEnd:q.noneEnd]) &&
+			t.matchSome(q.tags[q.noneEnd:])
 	}
 	return true
 }
 
-type Query struct {
-	all, none, some []int16
+func (t *Tag) matchAll(tags []int16) bool {
+	return !slices.ContainsFunc(tags, func(tag int16) bool {
+		return !t.HasTag(tag)
+	})
+}
+
+func (t *Tag) matchNone(tags []int16) bool {
+	return !slices.ContainsFunc(tags, func(tag int16) bool {
+		return t.HasTag(tag)
+	})
+}
+
+func (t *Tag) matchSome(tags []int16) bool {
+	return slices.ContainsFunc(tags, func(tag int16) bool {
+		return t.HasTag(tag)
+	})
 }

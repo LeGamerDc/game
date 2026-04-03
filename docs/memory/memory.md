@@ -16,6 +16,7 @@ Last Updated: 2026-04-03
 ## Latest State
 
 - Scheduler 实现完成，代码在 `sched/scheduler*.go`，35 个测试全部通过。
+- `tag.Query` 已改为编译态构造：`NewQuery(db, all, none, some)` 在构造期完成层级归一化、冗余消除、明显冲突检测，运行时 `Match` 改为基于单 slice + boundary + kind mask 的分派。
 - **WatchState 实现完成**：
   - `WatchState` 接口：`Interest(SignalKind) bool`，抽象底层实现（bitset/map/tree 等）
   - `WorldView[WS]` 暴露 `WatchOf(uint64) WS`，Logic 可在 Think/Apply 中查询其他 Logic 的 watch 状态
@@ -149,6 +150,12 @@ Last Updated: 2026-04-03
 - **WatchState 已覆盖最高价值优化**：发射端过滤远优于投递端合并。
 - **调研产出文件**：`docs/references/signal_algebra_research.md`、`docs/references/signal_event_algebra_research.md`。
 
+### tag.Query 匹配优化决策
+
+- **Query 保持轻量 runtime matcher，不引入 bitset 方案**：当前优化重点是把冗余消除前移到构造期，而不是替换 `Tag.cache` 的底层存储。
+- **构造期编译**：`all` 保留最具体条件，`none`/`some` 保留最宽条件，并在构造期处理 invalid tag、`all ∩ none` 冲突、`some` 被 `all` 保证或被 `none` 封死的情况。
+- **运行时布局压缩**：`Query` 使用单 slice + `allEnd`/`noneEnd` 边界 + `kind` mask，避免每次 `Match` 都按原始三段 slice 逐一走通用路径。
+
 ### Scheduler 并发模型
 
 - Think 阈值 500、并发 worker 5、最多 3 轮 superstep。参数统一放入 `ScheduleMeta`。
@@ -173,6 +180,10 @@ Last Updated: 2026-04-03
 ## Relevant Files
 
 - `AGENTS.md`
+- `tag/tag.go`
+- `tag/builder.go`
+- `tag/tag_test.go`
+- `tag/README.md`
 - `sched/world.go`
 - `sched/scheduler.go`
 - `sched/scheduler_parallel.go`

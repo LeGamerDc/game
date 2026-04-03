@@ -43,6 +43,10 @@ func (b *DB) String(i int16) string {
 	return b.i2s[i]
 }
 
+func (b *DB) validTag(i int16) bool {
+	return i >= 0 && int(i) < len(b.pi)
+}
+
 // Compile 将"."分割的字符串按前缀注册 Builder 中，并建立字符串和 int16 的双向映射。
 // 并记录字符串的 parent(最长前缀的 id)。
 func (b *DB) Compile(s string) int16 {
