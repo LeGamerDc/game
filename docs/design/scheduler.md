@@ -439,8 +439,7 @@ Scheduler 现有 5 个类型参数：`Scheduler[W, S, E, L, WS]`
 1. **Block 粒度**：`BlockSize=137` 是否适合所有负载模式？是否需要动态调整？
 2. **Think 返回 delay 的时间基准**：当前为相对当前 tick 的偏移量。
 3. **外部输入注入 API**：网络请求如何在 tick 开始前转化为 Signal。
-4. **Logic 生命周期**：Init/Dispose 与 scheduler/timer wheel 的交互。
-5. **Worker pool**：当前每 superstep 创建 goroutine，可替换为预分配 worker pool（代码中已标注 TODO）。
-6. **TickStats / tracing / debug API**：是否需要扩展。
-7. **World effect**：复用 `Logic` 接口是否足够清晰，还是应单独抽出 world reducer 接口。
-8. **WatchState 实现选择**：默认提供 bitset 实现还是由用户自行实现？是否需要框架级标准实现。
+4. **Worker pool**：当前每 superstep 创建 goroutine，可替换为预分配 worker pool（代码中已标注 TODO）。
+5. **TickStats / tracing / debug API**：是否需要扩展。
+6. **World effect**：复用 `Logic` 接口是否足够清晰，还是应单独抽出 world reducer 接口。
+7. **WatchState 实现选择**：默认提供 bitset 实现还是由用户自行实现？是否需要框架级标准实现。
