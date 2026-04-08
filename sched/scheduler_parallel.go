@@ -30,15 +30,18 @@ func (sc *Scheduler[W, S, E, L, WS]) parallelThink(world W, includeTimers bool) 
 // thinkWorker 是单个 thread 的 Think 执行逻辑。
 //
 // 对每个负责的 block：
-//  1. Timer（首轮 superstep）：遍历 wheel.get(blockId) 中的到期 refId，
-//     调用 Think(ctx, emptyInbox)。Logic 可能同时被 timer 和 signal 激活，
-//     此时会有多次 Think 调用——设计上合法，Logic 自己处理去重。
+//  1. Timer（首轮 superstep）：拷贝 wheel.get(blockId) 中的到期 refId 到本地
+//     buffer 并排序。
 //  2. Signal：跨所有 source thread 收集 signalRead[*][blockId] 到 flat buffer，
-//     按 ref 排序后线性分组，逐组调用 Think(ctx, signals)。
+//     按 ref 排序后线性分组。
+//  3. 归并遍历：将排好序的 timer refs 与 signal 分组做归并遍历，保证每个
+//     logic 最多被调用一次 Think：
+//     - 纯 timer ref（无同 ref signal）→ Think(ctx, emptyInbox)
+//     - 有 signal 的 ref（无论是否同时有 timer）→ Think(ctx, signals)
 //     排序替代了 map 分组，避免跨 block 的 map key 膨胀问题。
-//  3. Think 返回 delay > 0 → timerWheel.set（thread-local write，无竞争）。
-//  4. ctx.Publish → effectCollectors[threadId]（per-thread write，无竞争）。
-//  5. ctx.Emit   → signalWrite[threadId]（per-thread write，无竞争）。
+//  4. Think 返回 delay > 0 → timerWheel.set（thread-local write，无竞争）。
+//  5. ctx.Publish → effectCollectors[threadId]（per-thread write，无竞争）。
+//  6. ctx.Emit   → signalWrite[threadId]（per-thread write，无竞争）。
 //
 // 线程安全：
 //   - getLogic 并发读（调用方保证无 tick 内写）
@@ -68,19 +71,15 @@ func (sc *Scheduler[W, S, E, L, WS]) thinkWorker(threadId int, world W, includeT
 	flatBuf := sc.thinkCollectBuf[threadId].buf
 
 	for _, blockId := range sc.thinkBlocks[threadId] {
-		// 1. Timer 到期激活（首轮 superstep）
+		// 1. 获取 timer refs 并原地排序。
+		//    直接排序 IndexSet.Raw() 会破坏其 index map 一致性，
+		//    但这是安全的：Think 阶段之后不会再读取当前 slot 的 epochSet
+		//    （merge 只写 future slot，advance 只推进 currentTime），
+		//    等 wheel 转回此 slot 时 epoch 不匹配会触发 lazy Clear 重置。
+		var timerRefs []uint64
 		if includeTimers {
-			for _, refId := range sc.timerWheel.get(blockId) {
-				logic, ok := sc.w.GetLogic(refId)
-				if !ok {
-					continue
-				}
-				thinkRef = refId
-				delay := logic.Think(ctx, sliceInbox[S](nil))
-				if delay > 0 {
-					sc.timerWheel.set(threadId, blockId, refId, delay)
-				}
-			}
+			timerRefs = sc.timerWheel.get(blockId)
+			slices.Sort(timerRefs)
 		}
 
 		// 2. 跨所有 source thread 收集 signal 到 flat buffer
@@ -88,23 +87,50 @@ func (sc *Scheduler[W, S, E, L, WS]) thinkWorker(threadId int, world W, includeT
 		for srcThread := range c {
 			flatBuf = append(flatBuf, sc.signalRead[srcThread].get(blockId)...)
 		}
-		if len(flatBuf) == 0 {
+
+		if len(timerRefs) == 0 && len(flatBuf) == 0 {
 			continue
 		}
 
-		// 3. 按 ref 排序，线性分组调用 Think
-		slices.SortFunc(flatBuf, func(a, b refVal[S]) int {
-			if c := cmp.Compare(a.ref, b.ref); c != 0 {
-				return c
-			}
-			return cmp.Compare(a.val.Order(), b.val.Order())
-		})
+		// 3. 按 ref 排序 signal，再按 Order 子排序
+		if len(flatBuf) > 0 {
+			slices.SortFunc(flatBuf, func(a, b refVal[S]) int {
+				if c := cmp.Compare(a.ref, b.ref); c != 0 {
+					return c
+				}
+				return cmp.Compare(a.val.Order(), b.val.Order())
+			})
+		}
+
+		// 4. 归并遍历 timer refs 与 signal 分组。
+		//    每个 logic 最多调用一次 Think。
+		ti := 0
 		for start := 0; start < len(flatBuf); {
 			ref := flatBuf[start].ref
 			end := start + 1
 			for end < len(flatBuf) && flatBuf[end].ref == ref {
 				end++
 			}
+
+			// 处理 refId < 当前 signal ref 的纯 timer refs
+			for ti < len(timerRefs) && timerRefs[ti] < ref {
+				tRef := timerRefs[ti]
+				ti++
+				if logic, ok := sc.w.GetLogic(tRef); ok {
+					thinkRef = tRef
+					delay := logic.Think(ctx, sliceInbox[S](nil))
+					if delay > 0 {
+						sc.timerWheel.set(threadId, blockId, tRef, delay)
+					}
+				}
+			}
+
+			// timer ref 与 signal ref 重合 → 跳过 timer（合并到 signal 调用）
+			if ti < len(timerRefs) && timerRefs[ti] == ref {
+				ti++
+			}
+
+			// 调用 Think，inbox 为本 ref 的所有 signals
 			if logic, ok := sc.w.GetLogic(ref); ok {
 				thinkRef = ref
 				delay := logic.Think(ctx, refValInbox[S](flatBuf[start:end]))
@@ -113,6 +139,18 @@ func (sc *Scheduler[W, S, E, L, WS]) thinkWorker(threadId int, world W, includeT
 				}
 			}
 			start = end
+		}
+
+		// 处理 signal 遍历结束后剩余的纯 timer refs
+		for ; ti < len(timerRefs); ti++ {
+			tRef := timerRefs[ti]
+			if logic, ok := sc.w.GetLogic(tRef); ok {
+				thinkRef = tRef
+				delay := logic.Think(ctx, sliceInbox[S](nil))
+				if delay > 0 {
+					sc.timerWheel.set(threadId, blockId, tRef, delay)
+				}
+			}
 		}
 	}
 

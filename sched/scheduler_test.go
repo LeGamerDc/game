@@ -659,18 +659,61 @@ func TestSchedulerTimerAndSignalSameLogic(t *testing.T) {
 		t.Fatalf("tick 1: expected 1 Think, got %d", thinkCount)
 	}
 
-	// Tick 2: timer fires AND external signal arrives
-	// Logic may be called multiple times (timer + signal) — that's OK
+	// Tick 2: timer fires AND external signal arrives.
+	// Merge optimization: logic is called exactly once with signal in inbox.
 	sc.Emit(7, testSignal{value: 2})
 	sc.ProcessTick(world)
-	if thinkCount < 2 {
-		t.Fatalf("tick 2: expected at least 2 total Thinks, got %d", thinkCount)
+	if thinkCount != 2 {
+		t.Fatalf("tick 2: expected exactly 2 total Thinks (1 per tick), got %d", thinkCount)
 	}
 }
 
 // TestSchedulerEffectsFromMultipleSources verifies that when multiple logics
 // publish effects to the same target, all effects are aggregated in a single
 // Apply call.
+// TestSchedulerTimerAndSignalMergedInbox verifies that when both timer and
+// signal are active for the same logic, Think is called exactly once with
+// the signal(s) in the inbox (timer activation is merged, not separate).
+func TestSchedulerTimerAndSignalMergedInbox(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(defaultMeta(), world)
+
+	callNum := 0
+	var mergedInboxLen int
+
+	logic := &testLogic{
+		id: 7,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
+			callNum++
+			if callNum == 1 {
+				return 1 // register timer for next tick
+			}
+			// Call 2: the merged call in tick 2
+			mergedInboxLen = inbox.Len()
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	// Tick 1: signal activates, registers timer delay=1
+	sc.Emit(7, testSignal{value: 1})
+	sc.ProcessTick(world)
+	if callNum != 1 {
+		t.Fatalf("tick 1: expected 1 call, got %d", callNum)
+	}
+
+	// Tick 2: timer + signal → merged into single Think with signal inbox
+	sc.Emit(7, testSignal{value: 2})
+	sc.ProcessTick(world)
+	if callNum != 2 {
+		t.Fatalf("tick 2: expected exactly 1 more call (total 2), got %d", callNum)
+	}
+	if mergedInboxLen != 1 {
+		t.Fatalf("merged call should have 1 signal in inbox, got %d", mergedInboxLen)
+	}
+}
+
 func TestSchedulerEffectsFromMultipleSources(t *testing.T) {
 	meta := defaultMeta()
 	meta.MaxSupersteps = 3
@@ -913,13 +956,13 @@ func TestSchedulerMultipleThinkCallsPerSuperstep(t *testing.T) {
 	sc.Emit(7, testSignal{value: 1})
 	sc.ProcessTick(world)
 
-	// Tick 2: timer fires + external signal → may be 1 or 2 Think calls
+	// Tick 2: timer fires + external signal → merged into exactly 1 Think call
 	sc.Emit(7, testSignal{value: 2})
 	sc.ProcessTick(world)
 
-	// The signal must have been delivered at some point
-	if totalSignals < 2 {
-		t.Fatalf("expected at least 2 total signals across Think calls, got %d", totalSignals)
+	// Both signals must have been delivered (one per tick, one per Think call)
+	if totalSignals != 2 {
+		t.Fatalf("expected exactly 2 total signals across Think calls, got %d", totalSignals)
 	}
 }
 
@@ -1716,6 +1759,81 @@ func TestSchedulerSerialEmptyTick(t *testing.T) {
 
 // TestSchedulerSerialSelfSignal verifies that a logic can emit a signal
 // to itself in serial mode, causing recursive Think calls up to depth limit.
+// TestSchedulerSerialTimerAndSignalMerged verifies that in serial mode,
+// when both timer and signal are active for the same logic, Think is called
+// exactly once with the signal(s) in the inbox.
+func TestSchedulerSerialTimerAndSignalMerged(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	callNum := 0
+	var mergedInboxLen int
+
+	logic := &testLogic{
+		id: 10,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
+			callNum++
+			if callNum == 1 {
+				return 1 // register timer for next tick
+			}
+			mergedInboxLen = inbox.Len()
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	// Tick 1: signal activates, registers timer
+	sc.Emit(10, testSignal{value: 1})
+	sc.ProcessTick(world)
+	if callNum != 1 {
+		t.Fatalf("tick 1: expected 1 call, got %d", callNum)
+	}
+
+	// Tick 2: timer + signal → merged into single Think
+	sc.Emit(10, testSignal{value: 2})
+	sc.ProcessTick(world)
+	if callNum != 2 {
+		t.Fatalf("tick 2: expected exactly 1 more call (total 2), got %d", callNum)
+	}
+	if mergedInboxLen != 1 {
+		t.Fatalf("merged call should have 1 signal in inbox, got %d", mergedInboxLen)
+	}
+}
+
+// TestSchedulerSerialSignalBatching verifies that in serial mode, multiple
+// signals to the same logic in the initial frontier are batched into a single
+// Think call (consistent with parallel mode behavior).
+func TestSchedulerSerialSignalBatching(t *testing.T) {
+	world := newTestWorld()
+	world.now = 1
+	sc := newTestScheduler(serialMeta(), world)
+
+	var inboxLen int
+	logic := &testLogic{
+		id: 5,
+		thinkFn: func(ctx *ThinkCtx[testWorld, testSignal, testEffect, testWatchState], inbox Inbox[testSignal]) int64 {
+			inboxLen = inbox.Len()
+			return 0
+		},
+	}
+	world.addLogic(logic)
+
+	// Emit 3 signals to the same logic
+	sc.Emit(5, testSignal{value: 1, order: 3})
+	sc.Emit(5, testSignal{value: 2, order: 1})
+	sc.Emit(5, testSignal{value: 3, order: 2})
+	sc.ProcessTick(world)
+
+	// All 3 signals should be batched into a single Think call
+	if logic.thinkHits.Load() != 1 {
+		t.Fatalf("expected exactly 1 Think call, got %d", logic.thinkHits.Load())
+	}
+	if inboxLen != 3 {
+		t.Fatalf("expected inbox with 3 signals, got %d", inboxLen)
+	}
+}
+
 func TestSchedulerSerialSelfSignal(t *testing.T) {
 	meta := serialMeta()
 	meta.MaxSupersteps = 3

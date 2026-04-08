@@ -1,5 +1,10 @@
 package sched
 
+import (
+	"cmp"
+	"slices"
+)
+
 // ────────────────────────────────────────────────────────────────────────────
 // Serial Processing
 // ────────────────────────────────────────────────────────────────────────────
@@ -18,6 +23,20 @@ package sched
 //   - thinkTimer(ref): calls Think with an empty Inbox (timer-only activation).
 //   - applyOne(ref, eff): wraps eff into a single-element Inbox, calls
 //     Apply on the target logic. Apply's Emit may trigger thinkSignal inline.
+//
+// Initial frontier merge optimization:
+//   - For each block, timer refs are copied to a local buffer and sorted.
+//   - Signals from all source threads are collected into a flat buffer,
+//     sorted by ref then Order().
+//   - A merge-iteration over sorted timer refs and signal groups ensures
+//     each logic is called at most once in the initial frontier:
+//   - timer-only ref → Think(nil) via thinkTimer
+//   - signal ref (with or without timer) → Think(batched signals) inline
+//   - Cascading from Think/Apply still uses the recursive closures above,
+//     processing one signal/effect at a time with immediate effect.
+//
+// This makes serial mode's initial frontier semantics consistent with
+// parallel mode: each logic sees all its signals in a single Think call.
 //
 // Depth control:
 //   - depth is tracked as a mutable stack variable, incremented before each
@@ -70,6 +89,9 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	// thinkSignal finds the target logic and calls Think with a single signal.
 	// On depth overflow, the signal is deferred to the next tick by pushing
 	// it into signalWrite[0] (which is not read during serial processing).
+	//
+	// This closure is used for cascading signals from within Think/Apply.
+	// The initial frontier uses the merge-iterate path below instead.
 	thinkSignal = func(ref uint64, sig S) {
 		if depth >= maxDepth {
 			// Depth budget exhausted: defer signal to next tick.
@@ -92,8 +114,7 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	}
 
 	// thinkTimer calls Think with an empty Inbox (timer-only activation).
-	// Timer activations only occur at the initial frontier (depth==0),
-	// so the depth guard is defensive only.
+	// Used for timer-only refs in the merge-iterate path.
 	thinkTimer = func(ref uint64) {
 		if depth >= maxDepth {
 			return // Budget exhausted (defensive; shouldn't happen for initial timers).
@@ -124,9 +145,9 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	commitCtx.Emit = thinkSignal
 
 	// ── Process initial frontier ─────────────────────────────────────────
-	// Iterate all blocks, consuming timer activations (first superstep only)
-	// and signals from signalRead. Each item may trigger recursive cascading
-	// via the closures above.
+	// For each block, collect timer refs and signals, sort both, then
+	// merge-iterate to call each logic at most once.
+	// Cascading from each Think call still uses the recursive closures above.
 	//
 	// Concurrency safety during iteration:
 	//   - signalRead is only read, never written during serial processing.
@@ -134,18 +155,85 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	//   - Timer registrations go to thread-local logs (not the wheel itself),
 	//     so timerWheel.get() results remain stable.
 	c := sc.meta.Concurrency
+	var flatBuf []refVal[S] // reused across blocks
+
 	for blockId := range sc.meta.BlockSize {
-		// Timer activations (first superstep only).
+		// 获取 timer refs 并原地排序。
+		// 直接排序 IndexSet.Raw() 会破坏其 index map 一致性，
+		// 但这是安全的：Think 阶段之后不会再读取当前 slot 的 epochSet
+		// （merge 只写 future slot，advance 只推进 currentTime），
+		// 等 wheel 转回此 slot 时 epoch 不匹配会触发 lazy Clear 重置。
+		var timerRefs []uint64
 		if includeTimers {
-			for _, refId := range sc.timerWheel.get(blockId) {
-				thinkTimer(refId)
-			}
+			timerRefs = sc.timerWheel.get(blockId)
+			slices.Sort(timerRefs)
 		}
-		// Signals from all source threads.
+
+		// Collect signals from all source threads.
+		flatBuf = flatBuf[:0]
 		for srcThread := range c {
-			for _, rv := range sc.signalRead[srcThread].get(blockId) {
-				thinkSignal(rv.ref, rv.val)
+			flatBuf = append(flatBuf, sc.signalRead[srcThread].get(blockId)...)
+		}
+
+		if len(timerRefs) == 0 && len(flatBuf) == 0 {
+			continue
+		}
+
+		// Sort signals by ref then Order.
+		if len(flatBuf) > 0 {
+			slices.SortFunc(flatBuf, func(a, b refVal[S]) int {
+				if c := cmp.Compare(a.ref, b.ref); c != 0 {
+					return c
+				}
+				return cmp.Compare(a.val.Order(), b.val.Order())
+			})
+		}
+
+		// Merge-iterate sorted timer refs and signal groups.
+		// Each logic is called at most once in the initial frontier.
+		ti := 0
+		for start := 0; start < len(flatBuf); {
+			ref := flatBuf[start].ref
+			end := start + 1
+			for end < len(flatBuf) && flatBuf[end].ref == ref {
+				end++
 			}
+
+			// Timer-only refs with refId < current signal ref.
+			for ti < len(timerRefs) && timerRefs[ti] < ref {
+				thinkTimer(timerRefs[ti])
+				ti++
+			}
+
+			// Timer ref matching signal ref → skip (merged into signal call).
+			if ti < len(timerRefs) && timerRefs[ti] == ref {
+				ti++
+			}
+
+			// Process signal group with depth tracking.
+			// At the initial frontier depth is 0, so the overflow branch
+			// is defensive only. Cascading depth is handled by thinkSignal.
+			if depth >= maxDepth {
+				// Defer all signals in this group to next tick.
+				for i := start; i < end; i++ {
+					sc.signalWrite[0].push(blockId, flatBuf[i])
+				}
+			} else if logic, ok := sc.w.GetLogic(ref); ok {
+				thinkRef = ref
+				depth++
+				delay := logic.Think(thinkCtx, refValInbox[S](flatBuf[start:end]))
+				depth--
+				if delay > 0 {
+					sc.timerWheel.set(sc.blockToThread[blockId], blockId, ref, delay)
+				}
+			}
+
+			start = end
+		}
+
+		// Drain remaining timer-only refs after all signal groups.
+		for ; ti < len(timerRefs); ti++ {
+			thinkTimer(timerRefs[ti])
 		}
 	}
 }

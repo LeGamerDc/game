@@ -1,14 +1,16 @@
 # Tasks
 
-Last Updated: 2026-04-03
+Last Updated: 2026-04-08
 
 ## Active
 
-- [ ] Game Ability System 设计：在 Scheduler 框架上设计技能/buff/伤害结算的内部架构
+- [ ] 性能 Demo 开发：验证 scheduler 并行性能，为博客投稿提供数据支撑
+- [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线
+- [ ] Game Ability System 设计：设计草稿第二版修订已完成，进入讨论确认阶段（确认设计方向 + 解决开放问题）
 
 ## Backlog
 
-- [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线
+- [ ] gamedeveloper.com 博客投稿：初稿已完成（`docs/papers/blog_parallel_tick.md`），待性能数据后投稿
 - [ ] 端到端 Combat Path Demo：至少一个完整技能→伤害→buff→死亡链路在框架内运行
 - [ ] GDC 投稿准备：先行工作分析与价值评估已完成，待 benchmark + demo
 - [ ] 设计空间查询 API：WorldView 需提供版本化只读空间索引接口
@@ -23,6 +25,7 @@ Last Updated: 2026-04-03
 
 ## Done
 
+- [x] Think 调用合并优化：thinkWorker/serialProcess 归并遍历 timer+signal，每个 logic 每个 superstep 最多一次 Think 调用；串行模式初始 frontier 信号批量化；44 个测试通过 (2026-04-08)
 - [x] Scheduler 设计与实现：并发/串行双模式、自动切换、timer wheel、block-based 分组、LPT 负载均衡、WatchState、35 个测试通过 (2026-04-01)
 - [x] tag.Query 编译态优化：构造期层级归一化、冗余消除、冲突检测；运行时单 slice + boundary + kind mask 分派 (2026-04-03)
 - [x] Signal/Effect 代数化调研：确认不做框架级 effect 合并，澄清 F4 commutativity 为容忍性 (2026-04-03)

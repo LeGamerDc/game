@@ -361,6 +361,87 @@ Not allowed:
 
 ---
 
+## 计算分解约束
+
+### 问题本质
+
+在并行 tick 架构中，没有任何一个阶段能同时访问 Source 和 Target 的完整最新状态：
+
+- **Think 阶段**：Source 可访问自身完整状态 + Target 的 WorldView 快照（可能过时 1 superstep）
+- **Apply 阶段**：Target 可访问自身完整最新状态 + Effect 携带的数据（Source 端打包的）
+
+这意味着**任何依赖双方状态的计算公式，必须可分解为 Source 端函数和 Target 端函数，由 Effect 数据连接**。
+
+### 分解公式
+
+```
+payload     = f_source(source.state, target.snapshot)     // Think phase
+finalResult = f_target(payload, target.currentState)       // Apply phase
+```
+
+### 可见性矩阵
+
+| 数据 | Think (Source) | Apply (Target) |
+|------|---------------|----------------|
+| Source private state | ✓ 完整 | ✗ 仅 Effect 携带的 |
+| Source public state | ✓ 完整 | ✗ 仅 Effect 携带的 |
+| Target public state | △ WorldView 快照（可能过时） | ✓ 完整最新 |
+| Target private state | ✗ | ✓ 完整最新 |
+
+### 设计指导
+
+1. **优先将计算推向 Target 端**：Target 端数据最新，尤其是防御/减免相关的计算应在 Apply 完成。
+2. **Source 端只计算必须依赖 source 私有状态的部分**：攻击力、暴击倍率、法术强度等。
+3. **Effect 携带中间结果，不是 source 全部状态**：打包 source 端计算后的中间值 + 少量无法预计算的原始参数（如 source 等级）。
+4. **若公式涉及 target 数据，优先让 target 端使用自身最新值**：而非 source 端使用 target 快照值。Target 快照只用于 Think 端的决策（如"是否值得攻击"），不用于精确计算。
+
+### 典型示例
+
+**例1：魔法伤害（自然分解）**
+
+```
+Formula: final = baseDmg * spellPower * (1 - magicResist)
+Think:   rawDmg = baseDmg * spellPower        // source data
+Apply:   final  = rawDmg * (1 - magicResist)  // target data
+Effect payload: rawDmg
+```
+
+**例2：等级差公式（需要携带 source 参数）**
+
+```
+Formula: final = rawDmg * (1 + 0.05 * (srcLv - tgtLv))
+Think:   rawDmg = ..., pack srcLv
+Apply:   final  = rawDmg * (1 + 0.05 * (srcLv - target.level))
+Effect payload: rawDmg + srcLv
+```
+
+**例3：斩杀（依赖 target 当前 HP）**
+
+```
+Formula: final = rawDmg * (2 - targetHP / targetMaxHP)
+Think:   rawDmg = ...
+Apply:   final  = rawDmg * (2 - self.hp / self.maxHP)  // use target's latest HP
+Effect payload: rawDmg
+```
+
+### Effect 数据设计模式
+
+推荐的 Effect 数据结构模式：
+
+```
+Effect recommended structure:
+  - Intermediate results (computed at source): rawDamage, healAmount, etc.
+  - Non-precomputable source params:           sourceLevel, penetration, etc.
+  - Metadata:                                  element type, flags (blockable/reflectable), effect source ref
+  - NOT included:                              full source attribute snapshot
+```
+
+### 与 adaptation_guide 的关系
+
+本约束与 `adaptation_guide.md` 中 M10（攻方快照 + 守方裁决）模式一致，但本节将其提升为 **scheduler 架构级的通用约束**，不限于伤害计算——任何跨 Logic 的双方状态依赖计算都必须遵循此分解模式。
+
+---
+
 ## Watch State
 
 ### 概述
