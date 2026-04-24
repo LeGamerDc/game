@@ -13,7 +13,7 @@ Last Updated: 2025-07
 | 文件 | 摘要 | 关键词 |
 |------|------|--------|
 | `parallel.md` | 并行 tick 概念模型：BSP superstep、Logic=Owner 所有权、Think/Apply 两阶段、Effect 顺序无关性 | BSP, superstep, ownership, Think/Apply |
-| `scheduler.md` | Scheduler 实现级设计：并发/串行双模式、block-based effect 收集、LPT 负载均衡、WatchState、计算分解约束 | block collector, LPT, WatchState, ScheduleMeta |
+| `scheduler.md` | Scheduler 实现级设计：并发/串行双模式、block-based effect 收集、LPT 负载均衡、StagedState、计算分解约束 | block collector, LPT, StagedState, ScheduleMeta |
 | `ability_system.md` | GAS 四模块设计草稿（AttrTable / BuffTable / AbilitySet / TagState），Buff/Running 统一，Modifier 定位，Effect 数据设计 | buff, modifier, attribute, ability |
 | `adaptation_guide.md` | 107 条逻辑链路适配分类指导手册，6 大分类 + 5 步判定流程 | adaptation, 6 categories, migration |
 

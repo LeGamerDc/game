@@ -1,5 +1,7 @@
 package sched
 
+import "github.com/legamerdc/game/lib"
+
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration
 // ────────────────────────────────────────────────────────────────────────────
@@ -61,10 +63,10 @@ type ScheduleMeta struct {
 //	L 应为指针类型（如 *MyLogic），否则 Think/Apply 对 private/public state
 //	的修改不会持久化。这是 Go 接口值语义的标准约束。
 type Scheduler[W interface {
-	World[WS]
+	World
 	LogicProvider[L]
-	WatchCommitter[WS]
-}, S SignalI, E EffectI, L Logic[W, S, E, WS], WS WatchState] struct {
+	StagePromoter[ST]
+}, S SignalI, E EffectI, L Logic[W, S, E, ST], ST StagedState] struct {
 	meta ScheduleMeta
 
 	// ── Logic 查找 ───────────────────────────────────────────────────
@@ -120,11 +122,11 @@ type Scheduler[W interface {
 	// 按 ref 排序后线性分组调用 Apply。每个 block 处理前截断到 0，跨 block 复用 capacity。
 	applyCollectBuf []collectBuf[refVal[E]]
 
-	// ── Per-thread Watch Update Collectors ────────────────────────────
-	// watchCollectors[threadId]: Think 阶段 SetWatch 闭包写入。
-	// Think barrier 后统一 flatten 并通过 WatchCommitter.CommitWatches 提交给 World。
-	// CacheLinePad 隔离保证并行写入无 false sharing。
-	watchCollectors []collectBuf[RefWatch[WS]]
+	// ── Per-thread Staged State Collectors ─────────────────────────────
+	// stageCollectors[threadId]: Think/Apply 阶段 WriteStage 闭包写入。
+	// 阶段 barrier 后由 promoteStages 串行提交给 World。
+	stageCollectors []lib.IndexMap[uint64, ST]
+	stageCommitBuf  []RefStage[ST]
 
 	// ── 预分配计算缓冲 ──────────────────────────────────────────────
 	blockLoads  []blockLoad // computeApplyAssignment 用
@@ -138,13 +140,13 @@ type Scheduler[W interface {
 //
 // Think 阶段的 block→thread 映射在此固定，后续不可变。
 func NewScheduler[W interface {
-	World[WS]
+	World
 	LogicProvider[L]
-	WatchCommitter[WS]
-}, S SignalI, E EffectI, L Logic[W, S, E, WS], WS WatchState](
+	StagePromoter[ST]
+}, S SignalI, E EffectI, L Logic[W, S, E, ST], ST StagedState](
 	meta ScheduleMeta,
 	w W,
-) *Scheduler[W, S, E, L, WS] {
+) *Scheduler[W, S, E, L, ST] {
 	// 补齐默认值
 	if meta.Concurrency <= 0 {
 		meta.Concurrency = 5
@@ -182,14 +184,16 @@ func NewScheduler[W interface {
 	applyBlocks := make([][]int, c)
 	thinkCollectBuf := make([]collectBuf[refVal[S]], c)
 	applyCollectBuf := make([]collectBuf[refVal[E]], c)
+	stageCollectors := make([]lib.IndexMap[uint64, ST], c)
 	for i := range c {
 		effectCollectors[i] = newBlockCollector[refVal[E]](bs)
 		signalRead[i] = newBlockCollector[refVal[S]](bs)
 		signalWrite[i] = newBlockCollector[refVal[S]](bs)
 		applyBlocks[i] = make([]int, 0, (bs/c)+1)
+		stageCollectors[i].Init(bs / c)
 	}
 
-	return &Scheduler[W, S, E, L, WS]{
+	return &Scheduler[W, S, E, L, ST]{
 		meta:             meta,
 		w:                w,
 		timerWheel:       newTimerWheel[uint64](meta.TimerWheelSize, bs, thinkBlocks),
@@ -201,7 +205,7 @@ func NewScheduler[W interface {
 		applyBlocks:      applyBlocks,
 		thinkCollectBuf:  thinkCollectBuf,
 		applyCollectBuf:  applyCollectBuf,
-		watchCollectors:  make([]collectBuf[RefWatch[WS]], c),
+		stageCollectors:  stageCollectors,
 		blockLoads:       make([]blockLoad, bs),
 		threadLoads:      make([]int, c),
 	}
@@ -214,7 +218,7 @@ func NewScheduler[W interface {
 // Emit 向指定 logic 注入外部信号（如网络输入）。
 // 信号暂存在 pending 中，下次 ProcessTick 开始时注入 signalRead。
 // 必须在 ProcessTick 外部调用（单线程）。
-func (sc *Scheduler[W, S, E, L, WS]) Emit(ref uint64, signal S) {
+func (sc *Scheduler[W, S, E, L, ST]) Emit(ref uint64, signal S) {
 	sc.pending = append(sc.pending, refVal[S]{ref, signal})
 }
 
@@ -237,7 +241,7 @@ func (sc *Scheduler[W, S, E, L, WS]) Emit(ref uint64, signal S) {
 //     - 串行：serialProcess（递归 inline）→ swap → break
 //  3. tick 结束：合并 timer 注册 → 推进 timer wheel
 //  4. 溢出处理：signalRead 中的残余信号自动保留到下一 tick
-func (sc *Scheduler[W, S, E, L, WS]) ProcessTick(world W) {
+func (sc *Scheduler[W, S, E, L, ST]) ProcessTick(world W) {
 	// Phase 0: 注入外部输入
 	sc.injectPending()
 
@@ -254,9 +258,10 @@ func (sc *Scheduler[W, S, E, L, WS]) ProcessTick(world W) {
 			sc.parallelThink(world, firstSuperstep)
 			firstSuperstep = false
 
-			sc.commitWatches(world)
+			sc.promoteStages(world)
 			sc.computeApplyAssignment()
 			sc.parallelApply(world)
+			sc.promoteStages(world)
 
 			// signalRead ← signalWrite（下一轮 Think 的输入）
 			// signalWrite ← old signalRead（清空后作为下一轮的输出缓冲）
@@ -301,12 +306,13 @@ func (sc *Scheduler[W, S, E, L, WS]) ProcessTick(world W) {
 // 使用固定的 threadId=0 作为外部输入的来源标识。
 // 所有 Think thread 都会读取 signalRead[0]（跨 source thread 遍历），
 // 因此外部信号能被正确路由到目标 block 对应的 Think thread。
-func (sc *Scheduler[W, S, E, L, WS]) injectPending() {
+func (sc *Scheduler[W, S, E, L, ST]) injectPending() {
 	blockSize := uint64(sc.meta.BlockSize)
 	for _, rv := range sc.pending {
 		blockId := int(hash(rv.ref, blockSize))
 		sc.signalRead[0].push(blockId, rv)
 	}
+	clear(sc.pending)
 	sc.pending = sc.pending[:0]
 }
 
@@ -321,7 +327,7 @@ func (sc *Scheduler[W, S, E, L, WS]) injectPending() {
 //
 //   - includeTimers=true（首轮 superstep）：统计 timer wheel + signalRead
 //   - includeTimers=false（后续 superstep）：仅统计 signalRead
-func (sc *Scheduler[W, S, E, L, WS]) countWork(includeTimers bool) int {
+func (sc *Scheduler[W, S, E, L, ST]) countWork(includeTimers bool) int {
 	count := 0
 	threshold := sc.meta.ThinkConcurrencyThreshold
 	bs := sc.meta.BlockSize
@@ -356,7 +362,7 @@ func (sc *Scheduler[W, S, E, L, WS]) countWork(includeTimers bool) int {
 //
 // 如果 superstep 循环因 MaxSupersteps 终止，signalRead 中残余的信号
 // 会自动保留到下一 tick（injectPending 不清空 signalRead）。
-func (sc *Scheduler[W, S, E, L, WS]) swapSignalBuffers() {
+func (sc *Scheduler[W, S, E, L, ST]) swapSignalBuffers() {
 	sc.signalRead, sc.signalWrite = sc.signalWrite, sc.signalRead
 	// 清空新的 write buffer（即旧的 read buffer，已被 Think 消费）
 	for _, c := range sc.signalWrite {
@@ -366,21 +372,29 @@ func (sc *Scheduler[W, S, E, L, WS]) swapSignalBuffers() {
 
 // resetEffectCollectors 清空所有 thread 的 effect collector。
 // effect 在 Think 中产出、Apply 中消费，superstep 结束后即可清空。
-func (sc *Scheduler[W, S, E, L, WS]) resetEffectCollectors() {
+func (sc *Scheduler[W, S, E, L, ST]) resetEffectCollectors() {
 	for _, c := range sc.effectCollectors {
 		c.reset(collectorMaxRetain)
 	}
 }
 
-// commitWatches 将 Think 阶段各 thread 收集的 watch 更新统一提交给 World。
+// promoteStages 将当前阶段各 thread 收集的 staged state 更新统一提交给 World。
 //
-// 在并行模式下，此方法在 Think barrier 之后、Apply 之前调用，
-// 确保 Apply 阶段通过 World.WatchOf 读到的是本轮 Think 更新后的 snapshot。
+// 在并行模式下，此方法在 Think barrier 之后、Apply 之前调用一次，
+// 在 Apply barrier 之后、下一轮 Think 之前再调用一次。
 //
-// 串行模式下 SetWatch 即时生效（单线程无竞争），不经过此方法。
-func (sc *Scheduler[W, S, E, L, WS]) commitWatches(world W) {
+// 串行模式下也复用同一 collector，并在 inline 阶段切换点提交。
+func (sc *Scheduler[W, S, E, L, ST]) promoteStages(world W) {
+	sc.stageCommitBuf = sc.stageCommitBuf[:0]
 	for t := range sc.meta.Concurrency {
-		world.CommitWatches(sliceInbox[RefWatch[WS]](sc.watchCollectors[t].buf))
-		sc.watchCollectors[t].buf = sc.watchCollectors[t].buf[:0]
+		sc.stageCollectors[t].Iter(func(ref uint64, state ST) {
+			sc.stageCommitBuf = append(sc.stageCommitBuf, RefStage[ST]{RefId: ref, State: state})
+		})
+		sc.stageCollectors[t].Clear()
 	}
+	if len(sc.stageCommitBuf) == 0 {
+		return
+	}
+	world.PromoteStages(sliceInbox[RefStage[ST]](sc.stageCommitBuf))
+	clear(sc.stageCommitBuf)
 }

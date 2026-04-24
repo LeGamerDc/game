@@ -52,7 +52,7 @@ import (
 //
 // After serialProcess returns, caller must swap signal buffers to preserve
 // deferred signals in signalRead for the next tick.
-func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, maxDepth int) {
+func (sc *Scheduler[W, S, E, L, ST]) serialProcess(world W, includeTimers bool, maxDepth int) {
 	depth := 0
 	bs := uint64(sc.meta.BlockSize)
 
@@ -64,15 +64,15 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	var thinkTimer func(uint64)
 	var applyOne func(uint64, E)
 
-	// thinkRef tracks the refId of the logic currently executing Think.
-	// Captured by reference in the SetWatch closure so that watch updates
+	// stageRef tracks the refId of the logic currently executing Think/Apply.
+	// Captured by reference in the WriteStage closures so that stage updates
 	// are associated with the correct logic.
-	var thinkRef uint64
+	var stageRef uint64
 
 	// ThinkCtx and CommitCtx are created once and reused across all
 	// recursive calls. Their Emit/Publish closures are set below.
-	thinkCtx := &ThinkCtx[W, S, E, WS]{World: world}
-	commitCtx := &CommitCtx[W, S, WS]{World: world}
+	thinkCtx := &ThinkCtx[W, S, E, ST]{World: world}
+	commitCtx := &CommitCtx[W, S, ST]{World: world}
 
 	// applyOne finds the target logic and calls Apply with a single effect.
 	// Apply does NOT increment depth — Think→Publish→Apply is one atomic
@@ -83,7 +83,12 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 		if !ok {
 			return
 		}
+		sc.promoteStages(world)
+		prevStageRef := stageRef
+		stageRef = ref
 		logic.Apply(commitCtx, sliceInbox[E]{eff})
+		sc.promoteStages(world)
+		stageRef = prevStageRef
 	}
 
 	// thinkSignal finds the target logic and calls Think with a single signal.
@@ -103,10 +108,13 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 		if !ok {
 			return
 		}
-		thinkRef = ref
+		prevStageRef := stageRef
+		stageRef = ref
 		depth++
 		delay := logic.Think(thinkCtx, sliceInbox[S]{sig})
 		depth--
+		sc.promoteStages(world)
+		stageRef = prevStageRef
 		if delay > 0 {
 			blockId := int(hash(ref, bs))
 			sc.timerWheel.set(sc.blockToThread[blockId], blockId, ref, delay)
@@ -123,10 +131,13 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 		if !ok {
 			return
 		}
-		thinkRef = ref
+		prevStageRef := stageRef
+		stageRef = ref
 		depth++
 		delay := logic.Think(thinkCtx, sliceInbox[S](nil))
 		depth--
+		sc.promoteStages(world)
+		stageRef = prevStageRef
 		if delay > 0 {
 			blockId := int(hash(ref, bs))
 			sc.timerWheel.set(sc.blockToThread[blockId], blockId, ref, delay)
@@ -134,15 +145,24 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	}
 
 	// Wire closures into contexts.
-	thinkCtx.Emit = thinkSignal
-	thinkCtx.Publish = applyOne
-	// Serial mode: SetWatch commits immediately (single-threaded, no race).
-	// This is consistent with serial mode's "truly inline" semantics where
-	// Apply also immediately modifies public state.
-	thinkCtx.SetWatch = func(ws WS) {
-		world.CommitWatches(sliceInbox[RefWatch[WS]]{RefWatch[WS]{thinkRef, ws}})
+	thinkCtx.Emit = func(ref uint64, sig S) {
+		sc.promoteStages(world)
+		thinkSignal(ref, sig)
 	}
-	commitCtx.Emit = thinkSignal
+	thinkCtx.Publish = func(ref uint64, eff E) {
+		sc.promoteStages(world)
+		applyOne(ref, eff)
+	}
+	thinkCtx.WriteStage = func(state ST) {
+		sc.stageCollectors[0].Put(stageRef, state)
+	}
+	commitCtx.Emit = func(ref uint64, sig S) {
+		sc.promoteStages(world)
+		thinkSignal(ref, sig)
+	}
+	commitCtx.WriteStage = func(state ST) {
+		sc.stageCollectors[0].Put(stageRef, state)
+	}
 
 	// ── Process initial frontier ─────────────────────────────────────────
 	// For each block, collect timer refs and signals, sort both, then
@@ -219,10 +239,13 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 					sc.signalWrite[0].push(blockId, flatBuf[i])
 				}
 			} else if logic, ok := sc.w.GetLogic(ref); ok {
-				thinkRef = ref
+				prevStageRef := stageRef
+				stageRef = ref
 				depth++
 				delay := logic.Think(thinkCtx, refValInbox[S](flatBuf[start:end]))
 				depth--
+				sc.promoteStages(world)
+				stageRef = prevStageRef
 				if delay > 0 {
 					sc.timerWheel.set(sc.blockToThread[blockId], blockId, ref, delay)
 				}

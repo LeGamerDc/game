@@ -62,9 +62,10 @@ ProcessTick(world):
        +-- Parallel Path --------------------------------+
        |  parallelThink(world, firstSuperstep)           |
        |  firstSuperstep = false                         |
-       |  commitWatches(world)              // NEW       |
+       |  promoteStages(world)                           |
        |  computeApplyAssignment()          // LPT       |
        |  parallelApply(world)                           |
+       |  promoteStages(world)                           |
        |  swapSignalBuffers()                            |
        |  resetEffectCollectors()                        |
        +------------------------------------------------+
@@ -95,7 +96,7 @@ ProcessTick(world):
 
 ### Logic 查找
 
-Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `WorldView` + `LogicProvider[L]`），通过 `W.GetLogic(ref)` 查找 logic。getLogic 在 Think/Apply 阶段被并发调用，调用方须保证并发读安全。
+Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `World` + `LogicProvider[L]` + `StagePromoter[ST]`），通过 `W.GetLogic(ref)` 查找 logic。getLogic 在 Think/Apply 阶段被并发调用，调用方须保证并发读安全。
 
 ---
 
@@ -112,7 +113,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `WorldV
 
 **Thread 分配**：`blockId % Concurrency → threadId`，初始化时固定，跨 superstep/tick 一致。同一 Logic（映射到同一 block）始终在同一 thread 上执行 Think，使 timer wheel 的 thread-local write 天然无冲突。
 
-**thinkRef 追踪**：每个 thread 维护一个 `thinkRef` 变量，记录当前正在执行 Think 的 Logic refId。`SetWatch` 闭包捕获 `thinkRef` 以将 watch 更新关联到正确的 Logic，避免每次调用都创建新闭包。
+**thinkRef 追踪**：每个 thread 维护一个 `thinkRef` 变量，记录当前正在执行 Think 的 Logic refId。`WriteStage` 闭包捕获 `thinkRef` 以将 staged state 更新关联到正确的 Logic，避免 API 暴露 ref 参数。
 
 **每个 thread 的执行流程**（对每个负责的 block）：
 
@@ -121,7 +122,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `WorldV
 3. **产出写入**：
    - `ctx.Publish(ref, eff)` → `effectCollectors[threadId]` 按 `hash(ref) % BlockSize` 分桶
    - `ctx.Emit(ref, sig)` → `signalWrite[threadId]` 按 `hash(ref) % BlockSize` 分桶
-   - `ctx.SetWatch(ws)` → `watchCollectors[threadId]`，打包为 `RefWatch{thinkRef, ws}`
+   - `ctx.WriteStage(st)` → `stageCollectors[threadId]`，以 `thinkRef` 为 key 写入 `IndexMap`
    - Think 返回 `delay > 0` → `timerWheel.set(threadId, blockId, ref, delay)`
 
 **Sort-based 分组**（替代旧的 map-based 分组）：per-thread `collectBuf` 收集同一 block 的所有 signal 到 flat slice，`slices.SortFunc` 按 ref 排序后线性扫描分组。每个 block 处理前 `flatBuf[:0]` 重置，无跨 block 状态泄漏。`refValInbox` 适配器将 `[]refVal[S]` 子切片零拷贝适配为 `Inbox[S]` 接口。
@@ -130,7 +131,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `WorldV
 
 - `signalRead[*]` 在 Think 阶段只读（上轮 swap 后不再写入）
 - `effectCollectors[threadId]` / `signalWrite[threadId]` 只有本 thread 写入
-- `watchCollectors[threadId]` 只有本 thread 写入（CacheLinePad 隔离）
+- `stageCollectors[threadId]` 只有本 thread 写入；阶段 barrier 后串行 promote
 - `timerWheel.threadBuf[threadId]` 只有本 thread 写入
 - getLogic 并发读（调用方保证 tick 内无写）
 
@@ -138,7 +139,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `WorldV
 
 **Block 分配**：LPT（Longest Processing Time first）近似算法——统计每个 block 跨所有 Think thread 的 effect 总量（`blockLoads`），按量降序排列，依次分配给当前负载最低的 thread。这是经典多处理器调度的 (4/3 - 1/(3T)) 近似算法。无 effect 的 block 跳过。
 
-**CommitCtx 使用 WorldView**：Apply 阶段的 `CommitCtx.World` 类型为 `WorldView[WS]`（通过 `world.GetWorldView()` 获取），提供只读快照访问，包含 `WatchOf(ref)` 查询其他 Logic 的 watch 状态。
+**CommitCtx 使用同一 World 类型**：Apply 阶段的 `CommitCtx.World` 与 Think 阶段同为 `W World`。阶段稳定数据（例如 WatchState）不再是 `sched.World` 的内建方法，由上层 framework 通过 `StagedState` / `PromoteStages` 维护并暴露查询 API。
 
 **每个 thread 的执行流程**（对分配到的每个 block）：
 
@@ -146,6 +147,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `WorldV
 2. 按 ref 排序后线性分组（同 Think Phase 的 sort-based 分组策略）
 3. 逐组调用 `logic.Apply(commitCtx, effects)`，`refValInbox` 适配器零拷贝传入
 4. Apply 产出的 signal → `signalWrite[threadId]`
+5. `ctx.WriteStage(st)` → `stageCollectors[threadId]`，以当前 Apply target ref 为 key 写入 `IndexMap`
 
 **World Effect**：`RefWorld` 按 `hash(RefWorld) % BlockSize` 落入某个 block，作为该 block 的普通 target 参与 Apply。World Apply 内部串行（只有一个 owner：`RefWorld`），与其他 entity Apply 天然并行。不需要独立的 world effect 阶段。
 
@@ -205,12 +207,13 @@ applyOne(ref, eff):
 
 闭包接入 context：
 
-- `thinkCtx.Emit = thinkSignal` — Think 产出 signal → 递归 Think
-- `thinkCtx.Publish = applyOne` — Think 产出 effect → 立即 Apply
-- `thinkCtx.SetWatch = func(ws)` — 立即通过 `world.CommitWatches` 提交（单线程无竞争）
-- `commitCtx.Emit = thinkSignal` — Apply 产出 signal → 递归 Think
+- `thinkCtx.Emit` — promote staged state 后递归 Think
+- `thinkCtx.Publish` — promote staged state 后立即 Apply
+- `thinkCtx.WriteStage = func(st)` — 写入 `stageCollectors[0]`，key 为当前执行 Logic ref
+- `commitCtx.Emit` — promote staged state 后递归 Think
+- `commitCtx.WriteStage = func(st)` — 写入 `stageCollectors[0]`，key 为当前执行 Logic ref
 
-ThinkCtx 和 CommitCtx 各创建一次，跨所有递归调用复用。闭包捕获的 `depth` 和 `thinkRef` 是同一个栈变量，单线程下 inc/dec 自然匹配调用栈。串行模式下 `SetWatch` 立即生效，与 Apply 立即修改 public state 的语义一致。
+ThinkCtx 和 CommitCtx 各创建一次，跨所有递归调用复用。闭包捕获的 `depth` 和 `stageRef` 是同一个栈变量；进入嵌套 Think/Apply 前保存旧 `stageRef`，返回后恢复，避免递归 Publish/Emit 后 WriteStage 错写到嵌套 Logic。串行模式在 inline 阶段切换点调用 `promoteStages`，与 Apply 立即修改 public state 的语义一致。
 
 ### 初始 Frontier 处理
 
@@ -244,10 +247,10 @@ for blockId in 0..BlockSize:
 
 ### 接口兼容性
 
-Logic interface 在两种模式下完全相同。差异仅在 `ThinkCtx.Emit` / `ThinkCtx.Publish` / `ThinkCtx.SetWatch` / `CommitCtx.Emit` 闭包的实现：
+Logic interface 在两种模式下完全相同。差异仅在 `ThinkCtx.Emit` / `ThinkCtx.Publish` / `ThinkCtx.WriteStage` / `CommitCtx.Emit` / `CommitCtx.WriteStage` 闭包的实现：
 
-- **并发模式**：写入 worker 本地 buffer，barrier 后统一处理（effect/signal/watch）
-- **串行模式**：Emit/Publish 立即递归调用目标 Logic，SetWatch 立即提交
+- **并发模式**：写入 worker 本地 buffer，barrier 后统一处理（effect/signal/staged state）
+- **串行模式**：Emit/Publish 立即递归调用目标 Logic，WriteStage 在 inline 阶段切换点 promote
 
 Logic 实现无需感知当前执行模式。
 
@@ -309,23 +312,23 @@ Logic 实现无需感知当前执行模式。
 Input:              inbox (signals)             inbox (effects, grouped by target)
 Output:             effects[]                   signals[]
                     signals[]
-                    watch updates[]
+                    staged state updates[]
                     timer registrations[]
 
 Can modify:         private state               public state (own only)
-Reads:              world snapshot (World)       world snapshot (WorldView)
-                    WatchOf(ref)                WatchOf(ref)
+Reads:              world snapshot (World)       world snapshot (World)
+                    framework staged queries    framework staged queries
 
 Not allowed:
   Apply produce effect (CommitCtx has no Publish)
-  Apply set watch (CommitCtx has no SetWatch)
+  WriteStage for other owners (no ref parameter)
   Think/Apply directly modify other owner's state
 ```
 
-**Watch 更新流程**：
+**StagedState 更新流程**：
 
-- **并发模式**：Think 阶段 `SetWatch(ws)` → per-thread `watchCollectors` → Think barrier 后 `commitWatches` flatten 并调用 `World.CommitWatches(Inbox[RefWatch[WS]])` → Apply 和下一轮 Think 通过 `WorldView.WatchOf(ref)` 读到更新后的 snapshot
-- **串行模式**：`SetWatch(ws)` 立即调用 `world.CommitWatches`（单线程无竞争），后续 inline Think/Apply 立即可见
+- **并发模式**：Think/Apply 阶段 `WriteStage(st)` → per-thread `IndexMap[ref]st` → 阶段 barrier 后 `promoteStages` flatten 并调用 `World.PromoteStages(Inbox[RefStage[ST]])`。调用点为 Think→Apply 和 Apply→下一轮 Think。
+- **串行模式**：`WriteStage(st)` 写入 `stageCollectors[0]`；在 inline Emit/Publish/Think/Apply 边界调用 `promoteStages`，保持 truly inline 语义。
 
 并发模式下，同一 superstep 内 Think 阶段 public state 静态（所有 Think 共享同一份 snapshot）；superstep 间 Apply 更新后对下一轮 Think 可见。
 
@@ -342,8 +345,8 @@ Not allowed:
 5. Per-thread 并发写入结构体均有 CacheLinePad 隔离（头部 pad，不假定 cache line 尺寸）
 6. 串行模式 depth 递增仅发生在 Think 入口，Apply 不增加 depth
 7. Scheduler 不保证同一 Logic 在同一 superstep 内只 Think 一次——Logic 自身处理重复激活
-8. Watch 更新遵循 BSP 一致性：并发模式下 per-thread 收集 → Think barrier 后批量提交 → Apply 和下一轮 Think 看到更新后的 snapshot；串行模式下立即生效
-9. 默认无 watch：Logic 未调用 `SetWatch` 则不接收任何 signal（必须显式声明兴趣）
+8. StagedState 更新只允许写当前执行 Logic：`WriteStage` 没有 ref 参数，ref 由 scheduler 闭包根据当前 Think/Apply owner 注入
+9. StagedState promote 串行执行；并发阶段只负责写 per-thread `IndexMap`
 
 ---
 
@@ -352,12 +355,12 @@ Not allowed:
 | Dimension | Parallel | Serial |
 |---|---|---|
 | Apply granularity | 同一 target 的多个 effect 批量传入一次 Apply（`refValInbox`） | 每个 effect 独立触发一次 Apply（`sliceInbox`） |
-| Execution order | Think → barrier → commitWatches → Apply → barrier → swap | Think 中 Publish/Emit 立即触发（DFS recursive） |
+| Execution order | Think → barrier → promoteStages → Apply → barrier → promoteStages → swap | Think 中 Publish/Emit 立即触发（DFS recursive） |
 | Same-logic multi-activation | 可能（timer + signal 同时到达） | 可能（多条信号、或 self-emit） |
 | State visibility | Think 阶段 public state 静态；superstep 间 Apply 更新后可见 | Apply 立即修改 public state，后续 inline Apply 可见变化 |
-| Watch update | 延迟提交：per-thread 收集 → Think barrier 后 `commitWatches` 批量提交 | 即时提交：`SetWatch` 直接调用 `world.CommitWatches`，后续 inline 调用立即可见 |
+| StagedState update | 延迟提交：per-thread `IndexMap` 收集 → 阶段 barrier 后 `PromoteStages` 批量提交 | inline 边界提交：WriteStage 写 thread 0 collector，Emit/Publish/返回前 promote |
 
-这些差异在游戏场景下可接受：游戏不保证同 tick 内事件的发生顺序，Effect/Apply 设计为顺序无关（任意顺序都是合法的）。Watch 更新的延迟 vs 即时差异与 public state 可见性差异一致——串行模式下一切都是 truly inline 的自然结果。
+这些差异在游戏场景下可接受：游戏不保证同 tick 内事件的发生顺序，Effect/Apply 设计为顺序无关（任意顺序都是合法的）。StagedState 更新的延迟 vs inline 差异与 public state 可见性差异一致——串行模式下一切都是 truly inline 的自然结果。
 
 ---
 
@@ -367,7 +370,7 @@ Not allowed:
 
 在并行 tick 架构中，没有任何一个阶段能同时访问 Source 和 Target 的完整最新状态：
 
-- **Think 阶段**：Source 可访问自身完整状态 + Target 的 WorldView 快照（可能过时 1 superstep）
+- **Think 阶段**：Source 可访问自身完整状态 + Target 的 World 快照/稳定查询（可能过时 1 superstep）
 - **Apply 阶段**：Target 可访问自身完整最新状态 + Effect 携带的数据（Source 端打包的）
 
 这意味着**任何依赖双方状态的计算公式，必须可分解为 Source 端函数和 Target 端函数，由 Effect 数据连接**。
@@ -385,7 +388,7 @@ finalResult = f_target(payload, target.currentState)       // Apply phase
 |------|---------------|----------------|
 | Source private state | ✓ 完整 | ✗ 仅 Effect 携带的 |
 | Source public state | ✓ 完整 | ✗ 仅 Effect 携带的 |
-| Target public state | △ WorldView 快照（可能过时） | ✓ 完整最新 |
+| Target public state | △ World 快照/稳定查询（可能过时） | ✓ 完整最新 |
 | Target private state | ✗ | ✓ 完整最新 |
 
 ### 设计指导
@@ -442,76 +445,100 @@ Effect recommended structure:
 
 ---
 
-## Watch State
+## Staged State
 
 ### 概述
 
-WatchState 是 Logic 声明其感兴趣的 SignalKind 的机制，使发射方在 Emit 前可查询目标 Logic 的兴趣，实现发射端过滤。
+StagedState 是 Scheduler 提供给上层 framework 的阶段稳定数据提交机制。它不规定数据含义；WatchState、订阅摘要、空间/AOI membership、派生 public summary 等都可以作为某种 `ST` 使用。
+
+核心目标：
+
+- Think/Apply 可以提交“当前 owner 的 staged state”
+- API 不暴露 ref 参数，Logic 无法写其他 owner 的 staged state
+- promote 在阶段 barrier 后串行执行，不需要像 Think/Apply 一样并行化
+- WatchState 不再是 `sched` runtime 概念，而是 framework 在 `ST` 上构建的一个用例
 
 ### 接口设计
 
 ```
-WatchState interface {
-    Interest(SignalKind) bool
+StagedState interface{}
+
+RefStage[ST] struct {
+    RefId uint64
+    State ST
+}
+
+StagePromoter[ST] interface {
+    PromoteStages(Inbox[RefStage[ST]])
 }
 ```
 
-抽象实现——底层可以是 bitset、map、tree 等任何数据结构。框架只要求 `Interest` 方法的查询能力。
+`ThinkCtx` 和 `CommitCtx` 都暴露：
 
-**WorldView 暴露查询**：`WatchOf(uint64) WS` 允许 Logic 在 Think/Apply 阶段查询任意 Logic 的 watch 状态，从而决定是否 Emit。
+```
+WriteStage func(ST)
+```
 
-**SetWatch 在 ThinkCtx 上**：Logic 通过 `ctx.SetWatch(ws)` 在 Think 阶段声明兴趣。不通过 Think 返回值传递——避免零值歧义，且使 watch 更新成为可选操作。
+`WriteStage` 不接受 ref。Scheduler 在调用 Logic 前更新闭包捕获的当前 ref：Think 阶段为 `thinkRef`，Apply 阶段为 `applyRef`。因此 Logic 只能提交自身 owner 的 staged state。
 
-**默认无 watch**：未调用 `SetWatch` 的 Logic 不接收任何 signal，必须显式声明兴趣。
+### 并发模式：阶段边界 Promote
 
-### 并发模式：BSP 一致性延迟更新
-
-并发模式遵循 BSP 一致性模型，watch 更新与 effect/signal 采用相同的 barrier 语义：
+并发模式遵循 BSP 一致性模型，staged state 更新与 effect/signal 采用相同的阶段边界语义：
 
 ```
 Think Phase (parallel)
-  ├─ Logic.Think → ctx.SetWatch(ws)
-  │   └─ watchCollectors[threadId] ← RefWatch{thinkRef, ws}
-  ├─ (per-thread 并发写入，CacheLinePad 隔离)
+  ├─ Logic.Think → ctx.WriteStage(st)
+  │   └─ stageCollectors[threadId].Put(thinkRef, st)
   │
   Think Barrier ──────────────────────────
   │
-  commitWatches:
-  │  flatten watchCollectors[0..C] → watchCommitBuf
-  │  world.CommitWatches(sliceInbox[RefWatch[WS]](watchCommitBuf))
-  │  清空所有 watchCollectors
+  promoteStages:
+  │  flatten stageCollectors[0..C] → stageCommitBuf
+  │  world.PromoteStages(sliceInbox[RefStage[ST]](stageCommitBuf))
+  │  清空所有 stageCollectors
   │
-  ├─ Apply Phase: WorldView.WatchOf(ref) 返回更新后的 snapshot
-  └─ 下一轮 Think: WorldView.WatchOf(ref) 同样返回更新后的 snapshot
+  Apply Phase (parallel)
+  ├─ Logic.Apply → ctx.WriteStage(st)
+  │   └─ stageCollectors[threadId].Put(applyRef, st)
+  │
+  Apply Barrier ──────────────────────────
+  │
+  promoteStages:
+  │  world.PromoteStages(...)
+  │
+  └─ swapSignalBuffers → 下一轮 Think
 ```
 
 **关键数据结构**：
 
-- `watchCollectors []collectBuf[RefWatch[WS]]`：per-thread 收集缓冲，CacheLinePad 隔离
-- `watchCommitBuf []RefWatch[WS]`：预分配的 flatten 缓冲，避免每次 commitWatches 分配
-- `RefWatch[WS]`：`{RefId uint64, WS WS}` 将 watch 更新与 Logic ref 关联
-- `WatchCommitter` 接口：`CommitWatches(Inbox[RefWatch[WS]])`，由 World 实现
+- `stageCollectors []IndexMap[uint64, ST]`：per-thread 收集缓冲。同一 owner 同一阶段多次 `WriteStage` 时 last-write-wins。
+- `stageCommitBuf []RefStage[ST]`：预分配的 flatten 缓冲，避免每次 promote 分配。
+- `RefStage[ST]`：`{RefId uint64, State ST}` 将 staged state 更新与 Logic ref 关联。
+- `StagePromoter[ST]`：`PromoteStages(Inbox[RefStage[ST]])`，由 World/framework 实现。
 
-### 串行模式：即时更新
+### 串行模式：Inline 边界 Promote
 
-串行模式下 `SetWatch` 闭包立即调用 `world.CommitWatches`，打包单个 `RefWatch{thinkRef, ws}` 通过 `sliceInbox` 传入。单线程无竞争，与串行模式的 truly inline 语义一致（Apply 也立即修改 public state）。
+串行模式复用 `stageCollectors[0]`。`WriteStage` 写入当前 `stageRef`，并在 inline 阶段切换点调用 `promoteStages`：
+
+- Think 发出 Emit/Publish 前
+- Apply 发出 Emit 前
+- Think/Apply 返回后
+
+因为串行模式本身就是 truly inline，StagedState 的可见性也与 public state 一样更即时。为避免嵌套递归污染 owner ref，进入嵌套 Think/Apply 前保存旧 `stageRef`，返回后恢复。
 
 ### Scheduler 类型参数
 
-Scheduler 现有 5 个类型参数：`Scheduler[W, S, E, L, WS]`
+Scheduler 现有 5 个类型参数：`Scheduler[W, S, E, L, ST]`
 
-- `W`：`World[WS] + LogicProvider[L] + WatchCommitter[WS]`
+- `W`：`World + LogicProvider[L] + StagePromoter[ST]`
 - `S`：`SignalI`
 - `E`：`EffectI`
-- `L`：`Logic[W, S, E, WS]`
-- `WS`：`WatchState`
+- `L`：`Logic[W, S, E, ST]`
+- `ST`：`StagedState`
 
-### World vs WorldView 分层
+### WatchState 作为 framework 用例
 
-- `WorldView[WS]`：只读快照接口，提供 `Now()`、`Version()`、`Round()`、`WatchOf(ref)`
-- `World[WS]`：扩展 `WorldView[WS]`，增加 `GetWorldView() WorldView[WS]`
-- ThinkCtx 持有 `World`（完整访问），CommitCtx 持有 `WorldView`（只读访问）
-- Apply 阶段通过 `world.GetWorldView()` 获取 WorldView，确保 reducer 无法写穿 World
+WatchState 可以由 framework 定义为 `ST` 的一部分，例如 `UnitStage{Watch WatchBits, AOI CellID, Public AttrSummary}`。World/framework 在 `PromoteStages` 中把 staged state 写入自己的双缓冲或版本化视图，并提供 `WatchOf(ref)` 这类查询方法给具体 `W` 类型。Scheduler 不再知道 `WatchState` 或 `WatchOf`。
 
 ---
 
@@ -523,4 +550,4 @@ Scheduler 现有 5 个类型参数：`Scheduler[W, S, E, L, WS]`
 4. **Worker pool**：当前每 superstep 创建 goroutine，可替换为预分配 worker pool（代码中已标注 TODO）。
 5. **TickStats / tracing / debug API**：是否需要扩展。
 6. **World effect**：复用 `Logic` 接口是否足够清晰，还是应单独抽出 world reducer 接口。
-7. **WatchState 实现选择**：默认提供 bitset 实现还是由用户自行实现？是否需要框架级标准实现。
+7. **StagedState 标准组件**：是否在 framework 层提供 WatchBits、AOI membership、AttrSummary 等常用 staged state 构件。

@@ -1,6 +1,6 @@
 # Tasks
 
-Last Updated: 2026-04-08
+Last Updated: 2026-04-24
 
 ## Active
 
@@ -25,6 +25,7 @@ Last Updated: 2026-04-08
 
 ## Done
 
+- [x] Scheduler StagedState 重设计首版实现：WatchState 移出 runtime，新增 `WriteStage` / `PromoteStages`，并发/串行路径阶段 promote，闭包 benchmark 与 `go test ./...` 通过 (2026-04-24)
 - [x] mk_attr 显式 field ID 改造 + demo Makefile：TOML 格式改为 { id, type }，代码生成使用显式 ID，demo Makefile gen-attr target，21 个测试通过 (2026-07-15)
 - [x] Think 调用合并优化：thinkWorker/serialProcess 归并遍历 timer+signal，每个 logic 每个 superstep 最多一次 Think 调用；串行模式初始 frontier 信号批量化；44 个测试通过 (2026-04-08)
 - [x] Scheduler 设计与实现：并发/串行双模式、自动切换、timer wheel、block-based 分组、LPT 负载均衡、WatchState、35 个测试通过 (2026-04-01)

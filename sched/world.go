@@ -19,16 +19,12 @@ func IsNormalRef(r uint64) bool { return r < RefWorld }
 func IsValidRef(r uint64) bool { return r != RefNone }
 
 type (
-	WatchState interface {
-		Interest(SignalKind) bool
-	}
+	StagedState any
 
-	World[WS WatchState] interface {
+	World interface {
 		Now() int64
 		Version() uint32
 		Round() int32
-
-		WatchOf(uint64) WS
 	}
 
 	SignalI interface {
@@ -49,38 +45,39 @@ type (
 	// ThinkCtx intentionally exposes only read access to world state plus
 	// targeted effect/signal outputs. Public/entity/world writes must go
 	// through effect commit.
-	ThinkCtx[W World[WS], S SignalI, E EffectI, WS WatchState] struct {
-		World    W
-		Emit     func(uint64, S)
-		Publish  func(uint64, E)
-		SetWatch func(WS) // Declare signal interest; applied at Think barrier (parallel) or immediately (serial).
+	ThinkCtx[W World, S SignalI, E EffectI, ST StagedState] struct {
+		World      W
+		Emit       func(uint64, S)
+		Publish    func(uint64, E)
+		WriteStage func(ST)
 	}
 
 	// CommitCtx is used by owner-local reducers after effects are bucketed
 	// by target ref. Reducers may mutate only their own authoritative state.
-	CommitCtx[W World[WS], S SignalI, WS WatchState] struct {
-		World W
-		Emit  func(uint64, S)
+	CommitCtx[W World, S SignalI, ST StagedState] struct {
+		World      W
+		Emit       func(uint64, S)
+		WriteStage func(ST)
 	}
 
-	Logic[W World[WS], S SignalI, E EffectI, WS WatchState] interface {
+	Logic[W World, S SignalI, E EffectI, ST StagedState] interface {
 		ID() uint64
 		// Think returns the next self wakeup interval in ticks.
 		// A non-positive result means no automatic reschedule.
-		Think(*ThinkCtx[W, S, E, WS], Inbox[S]) int64
-		Apply(*CommitCtx[W, S, WS], Inbox[E])
+		Think(*ThinkCtx[W, S, E, ST], Inbox[S]) int64
+		Apply(*CommitCtx[W, S, ST], Inbox[E])
 	}
 
 	LogicProvider[L any] interface {
 		GetLogic(uint64) (L, bool)
 	}
 
-	RefWatch[WS WatchState] struct {
+	RefStage[ST StagedState] struct {
 		RefId uint64
-		WS    WS
+		State ST
 	}
 
-	WatchCommitter[WS WatchState] interface {
-		CommitWatches(Inbox[RefWatch[WS]])
+	StagePromoter[ST StagedState] interface {
+		PromoteStages(Inbox[RefStage[ST]])
 	}
 )

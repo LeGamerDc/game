@@ -31,7 +31,7 @@ type ReadOnlyGAS[...] struct {}
 
 ## 要求
 
-- gas/ 的实现需要配合 sched/ 的接口（例如 Think/Apply 等），引用 sched/ 的一些定义(例如 WatchState 等)
+- gas/ 的实现需要配合 sched/ 的接口（例如 Think/Apply/StagedState 等），引用 sched/ 的一些定义
 
 ## 任务
 

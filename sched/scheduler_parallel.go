@@ -15,7 +15,7 @@ import (
 // 产出 effect → effectCollectors，signal → signalWrite。
 //
 // TODO: 替换为预分配的 worker pool，避免每 superstep 创建 goroutine。
-func (sc *Scheduler[W, S, E, L, WS]) parallelThink(world W, includeTimers bool) {
+func (sc *Scheduler[W, S, E, L, ST]) parallelThink(world W, includeTimers bool) {
 	var wg sync.WaitGroup
 	for t := range sc.meta.Concurrency {
 		wg.Add(1)
@@ -49,21 +49,18 @@ func (sc *Scheduler[W, S, E, L, WS]) parallelThink(world W, includeTimers bool) 
 //   - effectCollectors[threadId] / signalWrite[threadId] 只有本 thread 写入
 //   - timerWheel.threadBuf[threadId] 只有本 thread 写入
 //   - thinkCollectBuf[threadId] 只有本 thread 读写（CacheLinePad 隔离）
-func (sc *Scheduler[W, S, E, L, WS]) thinkWorker(threadId int, world W, includeTimers bool) {
+func (sc *Scheduler[W, S, E, L, ST]) thinkWorker(threadId int, world W, includeTimers bool) {
 	// thinkRef tracks the ref of the logic currently executing Think.
-	// Captured by SetWatch closure so it can associate watch updates with
-	// the correct logic without per-call closure allocation.
+	// Captured by WriteStage closure so it can associate staged state updates
+	// with the correct logic without per-call closure allocation.
 	var thinkRef uint64
 
-	ctx := &ThinkCtx[W, S, E, WS]{
+	ctx := &ThinkCtx[W, S, E, ST]{
 		World:   world,
 		Emit:    sc.emitClosure(threadId),
 		Publish: sc.publishClosure(threadId),
-		SetWatch: func(ws WS) {
-			sc.watchCollectors[threadId].buf = append(
-				sc.watchCollectors[threadId].buf,
-				RefWatch[WS]{thinkRef, ws},
-			)
+		WriteStage: func(state ST) {
+			sc.stageCollectors[threadId].Put(thinkRef, state)
 		},
 	}
 
@@ -140,6 +137,7 @@ func (sc *Scheduler[W, S, E, L, WS]) thinkWorker(threadId int, world W, includeT
 			}
 			start = end
 		}
+		clear(flatBuf)
 
 		// 处理 signal 遍历结束后剩余的纯 timer refs
 		for ; ti < len(timerRefs); ti++ {
@@ -161,7 +159,7 @@ func (sc *Scheduler[W, S, E, L, WS]) thinkWorker(threadId int, world W, includeT
 // publishClosure 返回 Think 阶段 thread 专用的 effect 发射闭包。
 // effect 连同 targetRef 打包为 refVal[E]，按 hash(targetRef) % BlockSize 分桶
 // 存入 effectCollectors[threadId]。
-func (sc *Scheduler[W, S, E, L, WS]) publishClosure(threadId int) func(uint64, E) {
+func (sc *Scheduler[W, S, E, L, ST]) publishClosure(threadId int) func(uint64, E) {
 	collector := sc.effectCollectors[threadId]
 	blockSize := uint64(sc.meta.BlockSize)
 	return func(refId uint64, e E) {
@@ -175,7 +173,7 @@ func (sc *Scheduler[W, S, E, L, WS]) publishClosure(threadId int) func(uint64, E
 //
 // 注意：闭包通过 sc.signalWrite[threadId] 间接访问当前 write buffer，
 // 而非在创建时捕获 collector 指针。这保证 swap 后闭包仍写入正确的 buffer。
-func (sc *Scheduler[W, S, E, L, WS]) emitClosure(threadId int) func(uint64, S) {
+func (sc *Scheduler[W, S, E, L, ST]) emitClosure(threadId int) func(uint64, S) {
 	blockSize := uint64(sc.meta.BlockSize)
 	return func(refId uint64, sig S) {
 		sc.signalWrite[threadId].push(int(hash(refId, blockSize)), refVal[S]{refId, sig})
@@ -187,7 +185,7 @@ func (sc *Scheduler[W, S, E, L, WS]) emitClosure(threadId int) func(uint64, S) {
 // ────────────────────────────────────────────────────────────────────────────
 
 // parallelApply 启动并行 Apply 阶段。
-func (sc *Scheduler[W, S, E, L, WS]) parallelApply(world W) {
+func (sc *Scheduler[W, S, E, L, ST]) parallelApply(world W) {
 	var wg sync.WaitGroup
 	for t := range sc.meta.Concurrency {
 		if len(sc.applyBlocks[t]) == 0 {
@@ -214,10 +212,14 @@ func (sc *Scheduler[W, S, E, L, WS]) parallelApply(world W) {
 //   - 不同 Apply thread 处理不同 block → 不同 targetRef → 无写竞争
 //   - signalWrite[threadId] 只有本 thread 写入
 //   - applyCollectBuf[threadId] 只有本 thread 读写（CacheLinePad 隔离）
-func (sc *Scheduler[W, S, E, L, WS]) applyWorker(threadId int, world W) {
-	ctx := &CommitCtx[W, S, WS]{
+func (sc *Scheduler[W, S, E, L, ST]) applyWorker(threadId int, world W) {
+	var applyRef uint64
+	ctx := &CommitCtx[W, S, ST]{
 		World: world,
 		Emit:  sc.emitClosure(threadId),
+		WriteStage: func(state ST) {
+			sc.stageCollectors[threadId].Put(applyRef, state)
+		},
 	}
 
 	flatBuf := sc.applyCollectBuf[threadId].buf
@@ -247,10 +249,12 @@ func (sc *Scheduler[W, S, E, L, WS]) applyWorker(threadId int, world W) {
 				end++
 			}
 			if logic, ok := sc.w.GetLogic(ref); ok {
+				applyRef = ref
 				logic.Apply(ctx, refValInbox[E](flatBuf[start:end]))
 			}
 			start = end
 		}
+		clear(flatBuf)
 	}
 
 	// 写回以保留 grown capacity

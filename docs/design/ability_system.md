@@ -42,7 +42,7 @@ Last Updated: 2025-07
 
 ### 2.1 核心结论
 
-> **现有 Scheduler 的 Logic / Signal / Effect / WatchState 四元协议完全足以支撑 GAS。不需要新的协议原语。**
+> **现有 Scheduler 的 Logic / Signal / Effect / StagedState 协议足以支撑 GAS。不需要新的协议原语。**
 
 GAS 的所有概念，要么映射为 Effect/Signal 的数据内容，要么是 Logic 内部的私有实现细节。
 
@@ -53,12 +53,12 @@ GAS 的所有概念，要么映射为 Effect/Signal 的数据内容，要么是 
 | AbilitySystem（能力容器） | Logic 内部子系统 | Logic 私有状态 |
 | Ability（技能） | Logic.Think 中调度 | Logic 私有状态 |
 | Buff（持续效果，thinkable） | Logic 内部 BuffTable，Buff interface 实例 | Logic 私有状态 |
-| Attribute（属性） | Logic 内部 AttrTable（Base/Modifier=私有，Current=可通过 WorldView 暴露） | Logic 状态 |
+| Attribute（属性） | Logic 内部 AttrTable（Base/Modifier=私有，Current=可通过 World/staged view 暴露） | Logic 状态 |
 | Instant Effect（伤害/治疗） | Scheduler typed Effect | 协议层 |
 | Buff Effect（施加/移除 buff） | Scheduler typed Effect | 协议层 |
 | CC Effect（眩晕/沉默等） | Scheduler typed Effect（Grant Tag + Duration） | 协议层 |
 | Gameplay Event（击杀通知等） | Scheduler Signal | 协议层 |
-| 目标选择 | WorldView 空间查询（Think 阶段只读） | 协议层 |
+| 目标选择 | World/staged view 空间查询（Think 阶段只读） | 协议层 |
 | 技能冷却 | Logic 内部 timer 或 BuffTable min-heap | Logic 私有状态 |
 | Tag 状态 | `tag/` 包（Logic 私有持有） | Logic 私有状态 |
 
@@ -68,7 +68,7 @@ GAS 的所有概念，要么映射为 Effect/Signal 的数据内容，要么是 
 Think phase (read-only world, may modify own private state)
 +-- Process inbox Signals (event triggers)
 +-- Check ability activation (Tag/Cost/Cooldown, local only)
-+-- Target selection (WorldView read-only query)
++-- Target selection (World/staged view read-only query)
 +-- Produce Effects (Publish) and Signals (Emit)
 +-- Self-maintenance: BuffTable.Tick (drive Buff.Think), recompute Current
 +-- Return next wakeup time (min of all internal timers)
@@ -89,7 +89,7 @@ Apply phase (receive Effects, modify own state)
 
 Think 和 Apply 都可以修改 Logic 自身状态。区别在于：
 
-- **Think 修改**：自维护行为（Buff.Think 执行、cooldown 到期、属性重算）。这些变化在当前 superstep 的 WorldView 中**不可见**（BSP 语义），下一轮才可见。
+- **Think 修改**：自维护行为（Buff.Think 执行、cooldown 到期、属性重算）。这些变化在当前 superstep 的 World/staged view 中**不可见**（BSP 语义），下一轮才可见。
 - **Apply 修改**：响应外部 Effect（受到伤害、被施加 buff）。同样下一轮可见。
 
 两者对同一 Logic 不会并发执行（Think → barrier → Apply），无竞争。
@@ -175,7 +175,7 @@ finalResult = f_target(payload, target.currentState)     // Apply phase
 | **Base** | 永久值，被 Instant Effect 修改 | Apply（外部 Effect）或 Think（自消耗） |
 | **Current** | 运行时值，从 Base + 全量 Modifier 重算 | 任何 Modifier 变化后自动重算 |
 
-Current 可通过 WorldView 暴露给其他 Logic 读取（如 AI 读取 target HP 做决策）。
+Current 可通过 World/staged view 暴露给其他 Logic 读取（如 AI 读取 target HP 做决策）。
 
 ```
 Buff.OnApply:  register Modifier to AttrTable -> Current recomputed (Base + mods)
@@ -277,7 +277,7 @@ Scenario: damage calculation
 4. Check: HP.Current <= 0 -> death
 ```
 
-Meta Attribute（如 rawDamage）只在 Apply 内部的计算流程中存在，不注册到 AttrTable、不暴露给 WorldView。用户在 Apply 的计算函数中自行使用局部变量即可。
+Meta Attribute（如 rawDamage）只在 Apply 内部的计算流程中存在，不注册到 AttrTable、不暴露给 World/staged view。用户在 Apply 的计算函数中自行使用局部变量即可。
 
 GAS 库不需要为 Meta Attribute 提供专门机制——这是用户在 Apply 回调中的自由代码。
 
@@ -713,7 +713,7 @@ Ability "Death Explosion":
   OnTrigger: -> Publish(area_targets, DamageEffect{...})
 
 Integration:
-  owner's WatchState declares Interest(KillSignal)
+  owner's framework StagedState exposes WatchBits for KillSignal
   Logic.Think receives KillSignal -> AbilitySet.OnEvent(KillSignal)
   -> matching passive ability auto-Activates
 ```
@@ -858,7 +858,7 @@ Tick N:
     2. AbilitySet.Activate(Fireball)
        -> MP.Base -= 30 (cost deduct, private state)
        -> cdExpire = now + 5s (register cooldown timer)
-    3. Target selection: WorldView.SpatialQuery(pos, range=10)
+    3. Target selection: World.SpatialQuery(pos, range=10)
        -> returns [targetRef]
     4. ctx.Publish(targetRef, DamageEffect{
          rawDamage: 50 * mage.attrs.Current(SpellPower) / 100,
@@ -1283,7 +1283,7 @@ func (gas *AbilitySystem) NextWakeup(now int64) int64
 | # | 问题 | 当前倾向 | 讨论点 |
 |---|------|---------|--------|
 | 1 | **Modifier Channel 数量**：初版是否只支持单通道？ | 初版单通道，预留扩展接口 | 多通道的实际需求在初期可能不明确 |
-| 2 | **AttrTable 的 Public State 暴露方式**：WorldView 如何读取 Current？ | 用户的 WorldView 实现从 Logic 的 AttrTable 读取 | 需要与空间查询 API 一起设计 |
+| 2 | **AttrTable 的 Public State 暴露方式**：World/staged view 如何读取 Current？ | 用户的 World 或 staged view 实现从 Logic 的 AttrTable 读取 | 需要与空间查询 API 一起设计 |
 | 3 | **死亡判定的位置**：在 Apply 的 Flush 中？还是在 Think 中？ | Apply Flush 中检测 HP<=0，Emit 死亡 Signal | 需要明确死亡的 Signal/Effect 语义 |
 | 4 | **AbilitySystem 应该有多"薄"**：是一个编排器还是仅仅持有引用？ | 薄层编排器，提供 Tick/Flush 但不限制用户的 Effect 定义 | 过厚会限制灵活性，过薄会让用户重复编写粘合代码 |
 | 5 | **Buff 的 Value 与 StackCount 的关系**：固定 `value * stackCount`？还是允许自定义函数？ | 默认线性，允许用户传入自定义计算函数 | 某些游戏的堆叠有递减收益（如第 N 层只有 50% 效果） |
@@ -1305,7 +1305,7 @@ func (gas *AbilitySystem) NextWakeup(now int64) int64
 
 | # | 问题 | 备注 |
 |---|------|------|
-| 14 | **空间查询 API**：WorldView 的空间索引接口影响 Target 选择的设计 | 目前 WorldView 只有 Now()/Version()/Round()/WatchOf()，需要扩展 |
+| 14 | **空间查询 API**：World/Framework 的版本化空间索引接口影响 Target 选择的设计 | 目前 scheduler 只要求 Now()/Version()/Round()，空间索引与 WatchOf 应由上层 staged view 提供 |
 | 15 | **弹道 Logic 模板**：弹道作为独立 Logic，其 spawn/fly/collide/destroy 生命周期与 GAS 的交互方式 | 在 tasks.md 中已有 backlog 条目 |
 | 16 | **CC 效果标准化**：CC 的 Kind/Priority/Tenacity 体系 | 在 tasks.md 中已有 backlog 条目 |
 | 17 | **行为树 (bt/) 与 GAS 的集成**：NPC AI 如何通过 AbilitySet 释放技能 | 行为树节点调用 AbilitySet.CanActivate/Activate |
