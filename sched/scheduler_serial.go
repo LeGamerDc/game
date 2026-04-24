@@ -72,7 +72,7 @@ func (sc *Scheduler[W, S, E, L, WS]) serialProcess(world W, includeTimers bool, 
 	// ThinkCtx and CommitCtx are created once and reused across all
 	// recursive calls. Their Emit/Publish closures are set below.
 	thinkCtx := &ThinkCtx[W, S, E, WS]{World: world}
-	commitCtx := &CommitCtx[WorldView[WS], S, WS]{World: world.GetWorldView()}
+	commitCtx := &CommitCtx[W, S, WS]{World: world}
 
 	// applyOne finds the target logic and calls Apply with a single effect.
 	// Apply does NOT increment depth — Think→Publish→Apply is one atomic

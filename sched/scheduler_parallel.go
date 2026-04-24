@@ -215,8 +215,8 @@ func (sc *Scheduler[W, S, E, L, WS]) parallelApply(world W) {
 //   - signalWrite[threadId] 只有本 thread 写入
 //   - applyCollectBuf[threadId] 只有本 thread 读写（CacheLinePad 隔离）
 func (sc *Scheduler[W, S, E, L, WS]) applyWorker(threadId int, world W) {
-	ctx := &CommitCtx[WorldView[WS], S, WS]{
-		World: world.GetWorldView(),
+	ctx := &CommitCtx[W, S, WS]{
+		World: world,
 		Emit:  sc.emitClosure(threadId),
 	}
 

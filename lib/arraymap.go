@@ -7,6 +7,8 @@ type ArrayMap[K comparable, V any] struct {
 	nv []V
 }
 
+func (m *ArrayMap[K, V]) Len() int { return len(m.nk) }
+
 func (m *ArrayMap[K, V]) Clear() {
 	clear(m.nk)
 	clear(m.nv)

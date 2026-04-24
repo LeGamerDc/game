@@ -52,7 +52,7 @@ type ScheduleMeta struct {
 // 关于 Logic 查找：
 //
 //	Scheduler 不维护 logic 注册表。构造时注入 getLogic 函数，
-//	由外部（如 WorldView 的具体实现）负责 logic 的生命周期管理。
+//	由外部（如 World 的具体实现）负责 logic 的生命周期管理。
 //	getLogic 在 Think/Apply 阶段被并发调用，调用方须保证并发读安全
 //	（Go map 在无写时支持并发读）。
 //
@@ -375,7 +375,7 @@ func (sc *Scheduler[W, S, E, L, WS]) resetEffectCollectors() {
 // commitWatches 将 Think 阶段各 thread 收集的 watch 更新统一提交给 World。
 //
 // 在并行模式下，此方法在 Think barrier 之后、Apply 之前调用，
-// 确保 Apply 阶段通过 WorldView.WatchOf 读到的是本轮 Think 更新后的 snapshot。
+// 确保 Apply 阶段通过 World.WatchOf 读到的是本轮 Think 更新后的 snapshot。
 //
 // 串行模式下 SetWatch 即时生效（单线程无竞争），不经过此方法。
 func (sc *Scheduler[W, S, E, L, WS]) commitWatches(world W) {

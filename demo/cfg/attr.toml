@@ -1,0 +1,10 @@
+[demo]
+set_id = 1
+
+[demo.fields]
+Hp      = { id = 0, type = "instant" }
+Mana    = { id = 1, type = "instant" }
+MaxHp   = { id = 2, type = "attribute" }
+MaxMana = { id = 3, type = "attribute" }
+Attack  = { id = 4, type = "attribute" }
+Defense = { id = 5, type = "attribute" }

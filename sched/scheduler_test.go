@@ -50,10 +50,6 @@ func (w testWorld) WatchOf(ref uint64) testWatchState {
 	return w.watches[ref]
 }
 
-func (w testWorld) GetWorldView() WorldView[testWatchState] {
-	return w
-}
-
 func (w testWorld) CommitWatches(inbox Inbox[RefWatch[testWatchState]]) {
 	for i := range inbox.Len() {
 		rw := inbox.At(i)
@@ -84,7 +80,7 @@ func (e testEffect) Order() int32     { return e.order }
 type testLogic struct {
 	id        uint64
 	thinkFn   func(*ThinkCtx[testWorld, testSignal, testEffect, testWatchState], Inbox[testSignal]) int64
-	applyFn   func(*CommitCtx[WorldView[testWatchState], testSignal, testWatchState], Inbox[testEffect])
+	applyFn   func(*CommitCtx[testWorld, testSignal, testWatchState], Inbox[testEffect])
 	thinkHits atomic.Int64
 	applyHits atomic.Int64
 }
@@ -99,7 +95,7 @@ func (l *testLogic) Think(ctx *ThinkCtx[testWorld, testSignal, testEffect, testW
 	return 0
 }
 
-func (l *testLogic) Apply(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+func (l *testLogic) Apply(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 	l.applyHits.Add(1)
 	if l.applyFn != nil {
 		l.applyFn(ctx, arr)
@@ -242,7 +238,7 @@ func TestSchedulerEffectDelivery(t *testing.T) {
 	}
 	target := &testLogic{
 		id: 2,
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := 0; i < arr.Len(); i++ {
 				appliedEffects = append(appliedEffects, arr.At(i).value)
 			}
@@ -349,7 +345,7 @@ func TestSchedulerApplyEmitsSignal(t *testing.T) {
 	}
 	applier := &testLogic{
 		id: 20,
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			// Apply emits a signal to reactor
 			ctx.Emit(30, testSignal{value: 99})
 		},
@@ -438,7 +434,7 @@ func TestSchedulerSelfEffect(t *testing.T) {
 			ctx.Publish(50, testEffect{value: 999})
 			return 0
 		},
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := 0; i < arr.Len(); i++ {
 				selfApplied = append(selfApplied, arr.At(i).value)
 			}
@@ -740,7 +736,7 @@ func TestSchedulerEffectsFromMultipleSources(t *testing.T) {
 	}
 	target := &testLogic{
 		id: 3,
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := 0; i < arr.Len(); i++ {
 				appliedValues = append(appliedValues, arr.At(i).value)
 			}
@@ -1053,7 +1049,7 @@ func TestSchedulerEffectOrderDeterministic(t *testing.T) {
 	}
 	consumer := &testLogic{
 		id: 200,
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			for i := range arr.Len() {
 				received = append(received, arr.At(i).order)
 			}
@@ -1200,7 +1196,7 @@ func TestSchedulerSerialInlineExecution(t *testing.T) {
 	}
 	logicB := &testLogic{
 		id: 2,
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			order = append(order, "B.Apply")
 		},
 	}
@@ -1380,7 +1376,7 @@ func TestSchedulerSerialApplyEmitCascade(t *testing.T) {
 	}
 	applier := &testLogic{
 		id: 20,
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			order = append(order, "applier.Apply")
 			ctx.Emit(30, testSignal{value: 99})
 		},
@@ -1474,7 +1470,7 @@ func TestSchedulerSerialSelfEffect(t *testing.T) {
 			order = append(order, "Think.afterPublish")
 			return 0
 		},
-		applyFn: func(ctx *CommitCtx[WorldView[testWatchState], testSignal, testWatchState], arr Inbox[testEffect]) {
+		applyFn: func(ctx *CommitCtx[testWorld, testSignal, testWatchState], arr Inbox[testEffect]) {
 			order = append(order, "Apply")
 			if arr.Len() != 1 || arr.At(0).value != 999 {
 				t.Errorf("self-apply got %d effects, want 1 with value 999", arr.Len())

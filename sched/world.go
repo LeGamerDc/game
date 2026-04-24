@@ -23,18 +23,12 @@ type (
 		Interest(SignalKind) bool
 	}
 
-	WorldView[WS WatchState] interface {
+	World[WS WatchState] interface {
 		Now() int64
 		Version() uint32
 		Round() int32
 
 		WatchOf(uint64) WS
-	}
-
-	World[WS WatchState] interface {
-		WorldView[WS]
-
-		GetWorldView() WorldView[WS]
 	}
 
 	SignalI interface {
@@ -64,7 +58,7 @@ type (
 
 	// CommitCtx is used by owner-local reducers after effects are bucketed
 	// by target ref. Reducers may mutate only their own authoritative state.
-	CommitCtx[W WorldView[WS], S SignalI, WS WatchState] struct {
+	CommitCtx[W World[WS], S SignalI, WS WatchState] struct {
 		World W
 		Emit  func(uint64, S)
 	}
@@ -74,7 +68,7 @@ type (
 		// Think returns the next self wakeup interval in ticks.
 		// A non-positive result means no automatic reschedule.
 		Think(*ThinkCtx[W, S, E, WS], Inbox[S]) int64
-		Apply(*CommitCtx[WorldView[WS], S, WS], Inbox[E])
+		Apply(*CommitCtx[W, S, WS], Inbox[E])
 	}
 
 	LogicProvider[L any] interface {
