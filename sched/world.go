@@ -19,6 +19,8 @@ func IsNormalRef(r uint64) bool { return r < RefWorld }
 func IsValidRef(r uint64) bool { return r != RefNone }
 
 type (
+	StageKind int32
+
 	StagedState any
 
 	World interface {
@@ -45,39 +47,40 @@ type (
 	// ThinkCtx intentionally exposes only read access to world state plus
 	// targeted effect/signal outputs. Public/entity/world writes must go
 	// through effect commit.
-	ThinkCtx[W World, S SignalI, E EffectI, ST StagedState] struct {
+	ThinkCtx[W World, S SignalI, E EffectI] struct {
 		World      W
 		Emit       func(uint64, S)
 		Publish    func(uint64, E)
-		WriteStage func(ST)
+		WriteStage func(StageKind, StagedState)
 	}
 
 	// CommitCtx is used by owner-local reducers after effects are bucketed
 	// by target ref. Reducers may mutate only their own authoritative state.
-	CommitCtx[W World, S SignalI, ST StagedState] struct {
+	CommitCtx[W World, S SignalI] struct {
 		World      W
 		Emit       func(uint64, S)
-		WriteStage func(ST)
+		WriteStage func(StageKind, StagedState)
 	}
 
-	Logic[W World, S SignalI, E EffectI, ST StagedState] interface {
+	Logic[W World, S SignalI, E EffectI] interface {
 		ID() uint64
 		// Think returns the next self wakeup interval in ticks.
 		// A non-positive result means no automatic reschedule.
-		Think(*ThinkCtx[W, S, E, ST], Inbox[S]) int64
-		Apply(*CommitCtx[W, S, ST], Inbox[E])
+		Think(*ThinkCtx[W, S, E], Inbox[S]) int64
+		Apply(*CommitCtx[W, S], Inbox[E])
 	}
 
 	LogicProvider[L any] interface {
 		GetLogic(uint64) (L, bool)
 	}
 
-	RefStage[ST StagedState] struct {
+	RefStage struct {
 		RefId uint64
-		State ST
+		Kind  StageKind
+		State StagedState
 	}
 
-	StagePromoter[ST StagedState] interface {
-		PromoteStages(Inbox[RefStage[ST]])
+	StagePromoter interface {
+		PromoteStages(Inbox[RefStage])
 	}
 )

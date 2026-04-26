@@ -197,12 +197,12 @@ Think 应该看到的:
 - 只读 world snapshot（具体 query 能力由泛型实例化时的类型 `W` 提供）
 - Emit: 向目标 ref 发送 signal
 - Publish: 向目标 ref 发送 effect
-- WriteStage: 提交当前 Logic 的阶段稳定状态（`func(ST)`）。并发模式下写入 per-thread staged collectors，阶段 barrier 后 promote；串行模式下在 inline 阶段切换点 promote。
+- WriteStage: 提交当前 Logic 某个 staged domain 的阶段稳定状态（`func(StageKind, StagedState)`）。并发模式下写入 per-thread staged collectors，阶段 barrier 后 promote；串行模式下在 inline 阶段切换点 promote。
 
 Think 返回下次自动苏醒的 tick 间隔，只控制自己，不替别人挂定时器。跨 owner 交互统一通过 effect/signal 完成。
 
 WriteStage 设计为 Context 上的函数字段而非返回值的一部分，原因：
-- 避免零值歧义（返回零值 ST 无法区分"不更新 stage"和"清空 stage"）
+- 避免零值歧义（返回零值 state 无法区分"不更新 stage"和"清空 stage"）
 - Stage 更新是可选操作，大多数 Think/Apply 调用不需要更改 stage
 - 不暴露 ref 参数，防止 Logic 写入其他 owner 的 staged state
 
@@ -274,10 +274,10 @@ Effect/Signal 的代数组合（即框架在 Apply/Think 前将同类 effect/sig
 
 StagedState 是 scheduler 暴露的通用阶段稳定数据机制：
 
-- **StagedState 类型参数**：`ST` 不规定结构，可包含 WatchBits、AOI cell、public summary 等
-- **WriteStage**：Logic 在 Think/Apply 中通过 `ctx.WriteStage(st)` 提交自己的 staged state
-- **PromoteStages**：Scheduler 在阶段边界调用 `World.PromoteStages(Inbox[RefStage[ST]])`
-- **WatchState 作为用例**：framework 可在 `ST` 上实现 `WatchOf(targetRef)`，Emit 前由业务逻辑协作式查询
+- **StageKind**：显式区分 WatchBits、AOI cell、public summary 等不同 staged domain
+- **WriteStage**：Logic 在 Think/Apply 中通过 `ctx.WriteStage(kind, st)` 提交自己的 staged state
+- **PromoteStages**：Scheduler 在阶段边界调用 `World.PromoteStages(Inbox[RefStage])`
+- **WatchState 作为用例**：framework 可在某个 `StageKind` 上实现 `WatchOf(targetRef)`，Emit 前由业务逻辑协作式查询
 
 这保持了 scheduler 的 runtime 中立性：发射端过滤仍可实现，但不再把 WatchState 强行绑定到 `sched.World`。
 

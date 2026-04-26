@@ -65,8 +65,8 @@ type ScheduleMeta struct {
 type Scheduler[W interface {
 	World
 	LogicProvider[L]
-	StagePromoter[ST]
-}, S SignalI, E EffectI, L Logic[W, S, E, ST], ST StagedState] struct {
+	StagePromoter
+}, S SignalI, E EffectI, L Logic[W, S, E]] struct {
 	meta ScheduleMeta
 
 	// ── Logic 查找 ───────────────────────────────────────────────────
@@ -125,8 +125,8 @@ type Scheduler[W interface {
 	// ── Per-thread Staged State Collectors ─────────────────────────────
 	// stageCollectors[threadId]: Think/Apply 阶段 WriteStage 闭包写入。
 	// 阶段 barrier 后由 promoteStages 串行提交给 World。
-	stageCollectors []lib.IndexMap[uint64, ST]
-	stageCommitBuf  []RefStage[ST]
+	stageCollectors []lib.IndexMap[stageKey, StagedState]
+	stageCommitBuf  []RefStage
 
 	// ── 预分配计算缓冲 ──────────────────────────────────────────────
 	blockLoads  []blockLoad // computeApplyAssignment 用
@@ -142,11 +142,11 @@ type Scheduler[W interface {
 func NewScheduler[W interface {
 	World
 	LogicProvider[L]
-	StagePromoter[ST]
-}, S SignalI, E EffectI, L Logic[W, S, E, ST], ST StagedState](
+	StagePromoter
+}, S SignalI, E EffectI, L Logic[W, S, E]](
 	meta ScheduleMeta,
 	w W,
-) *Scheduler[W, S, E, L, ST] {
+) *Scheduler[W, S, E, L] {
 	// 补齐默认值
 	if meta.Concurrency <= 0 {
 		meta.Concurrency = 5
@@ -184,7 +184,7 @@ func NewScheduler[W interface {
 	applyBlocks := make([][]int, c)
 	thinkCollectBuf := make([]collectBuf[refVal[S]], c)
 	applyCollectBuf := make([]collectBuf[refVal[E]], c)
-	stageCollectors := make([]lib.IndexMap[uint64, ST], c)
+	stageCollectors := make([]lib.IndexMap[stageKey, StagedState], c)
 	for i := range c {
 		effectCollectors[i] = newBlockCollector[refVal[E]](bs)
 		signalRead[i] = newBlockCollector[refVal[S]](bs)
@@ -193,7 +193,7 @@ func NewScheduler[W interface {
 		stageCollectors[i].Init(bs / c)
 	}
 
-	return &Scheduler[W, S, E, L, ST]{
+	return &Scheduler[W, S, E, L]{
 		meta:             meta,
 		w:                w,
 		timerWheel:       newTimerWheel[uint64](meta.TimerWheelSize, bs, thinkBlocks),
@@ -218,7 +218,7 @@ func NewScheduler[W interface {
 // Emit 向指定 logic 注入外部信号（如网络输入）。
 // 信号暂存在 pending 中，下次 ProcessTick 开始时注入 signalRead。
 // 必须在 ProcessTick 外部调用（单线程）。
-func (sc *Scheduler[W, S, E, L, ST]) Emit(ref uint64, signal S) {
+func (sc *Scheduler[W, S, E, L]) Emit(ref uint64, signal S) {
 	sc.pending = append(sc.pending, refVal[S]{ref, signal})
 }
 
@@ -241,7 +241,7 @@ func (sc *Scheduler[W, S, E, L, ST]) Emit(ref uint64, signal S) {
 //     - 串行：serialProcess（递归 inline）→ swap → break
 //  3. tick 结束：合并 timer 注册 → 推进 timer wheel
 //  4. 溢出处理：signalRead 中的残余信号自动保留到下一 tick
-func (sc *Scheduler[W, S, E, L, ST]) ProcessTick(world W) {
+func (sc *Scheduler[W, S, E, L]) ProcessTick() {
 	// Phase 0: 注入外部输入
 	sc.injectPending()
 
@@ -255,13 +255,13 @@ func (sc *Scheduler[W, S, E, L, ST]) ProcessTick(world W) {
 
 		if workCount >= sc.meta.ThinkConcurrencyThreshold {
 			// ── Parallel path ────────────────────────────────────────
-			sc.parallelThink(world, firstSuperstep)
+			sc.parallelThink(sc.w, firstSuperstep)
 			firstSuperstep = false
 
-			sc.promoteStages(world)
+			sc.promoteStages(sc.w)
 			sc.computeApplyAssignment()
-			sc.parallelApply(world)
-			sc.promoteStages(world)
+			sc.parallelApply(sc.w)
+			sc.promoteStages(sc.w)
 
 			// signalRead ← signalWrite（下一轮 Think 的输入）
 			// signalWrite ← old signalRead（清空后作为下一轮的输出缓冲）
@@ -276,7 +276,7 @@ func (sc *Scheduler[W, S, E, L, ST]) ProcessTick(world W) {
 			// recursive closures, no intermediate buffering.
 			// Depth budget = remaining supersteps.
 			maxDepth := sc.meta.MaxSupersteps - round
-			sc.serialProcess(world, firstSuperstep, maxDepth)
+			sc.serialProcess(sc.w, firstSuperstep, maxDepth)
 
 			// Deferred signals (depth overflow) were written to signalWrite.
 			// Swap to preserve them in signalRead for the next tick.
@@ -306,7 +306,7 @@ func (sc *Scheduler[W, S, E, L, ST]) ProcessTick(world W) {
 // 使用固定的 threadId=0 作为外部输入的来源标识。
 // 所有 Think thread 都会读取 signalRead[0]（跨 source thread 遍历），
 // 因此外部信号能被正确路由到目标 block 对应的 Think thread。
-func (sc *Scheduler[W, S, E, L, ST]) injectPending() {
+func (sc *Scheduler[W, S, E, L]) injectPending() {
 	blockSize := uint64(sc.meta.BlockSize)
 	for _, rv := range sc.pending {
 		blockId := int(hash(rv.ref, blockSize))
@@ -327,7 +327,7 @@ func (sc *Scheduler[W, S, E, L, ST]) injectPending() {
 //
 //   - includeTimers=true（首轮 superstep）：统计 timer wheel + signalRead
 //   - includeTimers=false（后续 superstep）：仅统计 signalRead
-func (sc *Scheduler[W, S, E, L, ST]) countWork(includeTimers bool) int {
+func (sc *Scheduler[W, S, E, L]) countWork(includeTimers bool) int {
 	count := 0
 	threshold := sc.meta.ThinkConcurrencyThreshold
 	bs := sc.meta.BlockSize
@@ -362,7 +362,7 @@ func (sc *Scheduler[W, S, E, L, ST]) countWork(includeTimers bool) int {
 //
 // 如果 superstep 循环因 MaxSupersteps 终止，signalRead 中残余的信号
 // 会自动保留到下一 tick（injectPending 不清空 signalRead）。
-func (sc *Scheduler[W, S, E, L, ST]) swapSignalBuffers() {
+func (sc *Scheduler[W, S, E, L]) swapSignalBuffers() {
 	sc.signalRead, sc.signalWrite = sc.signalWrite, sc.signalRead
 	// 清空新的 write buffer（即旧的 read buffer，已被 Think 消费）
 	for _, c := range sc.signalWrite {
@@ -372,7 +372,7 @@ func (sc *Scheduler[W, S, E, L, ST]) swapSignalBuffers() {
 
 // resetEffectCollectors 清空所有 thread 的 effect collector。
 // effect 在 Think 中产出、Apply 中消费，superstep 结束后即可清空。
-func (sc *Scheduler[W, S, E, L, ST]) resetEffectCollectors() {
+func (sc *Scheduler[W, S, E, L]) resetEffectCollectors() {
 	for _, c := range sc.effectCollectors {
 		c.reset(collectorMaxRetain)
 	}
@@ -384,17 +384,22 @@ func (sc *Scheduler[W, S, E, L, ST]) resetEffectCollectors() {
 // 在 Apply barrier 之后、下一轮 Think 之前再调用一次。
 //
 // 串行模式下也复用同一 collector，并在 inline 阶段切换点提交。
-func (sc *Scheduler[W, S, E, L, ST]) promoteStages(world W) {
+func (sc *Scheduler[W, S, E, L]) promoteStages(world W) {
 	sc.stageCommitBuf = sc.stageCommitBuf[:0]
 	for t := range sc.meta.Concurrency {
-		sc.stageCollectors[t].Iter(func(ref uint64, state ST) {
-			sc.stageCommitBuf = append(sc.stageCommitBuf, RefStage[ST]{RefId: ref, State: state})
+		sc.stageCollectors[t].Iter(func(key stageKey, state StagedState) {
+			sc.stageCommitBuf = append(sc.stageCommitBuf, RefStage{RefId: key.ref, Kind: key.kind, State: state})
 		})
 		sc.stageCollectors[t].Clear()
 	}
 	if len(sc.stageCommitBuf) == 0 {
 		return
 	}
-	world.PromoteStages(sliceInbox[RefStage[ST]](sc.stageCommitBuf))
+	world.PromoteStages(sliceInbox[RefStage](sc.stageCommitBuf))
 	clear(sc.stageCommitBuf)
+}
+
+type stageKey struct {
+	ref  uint64
+	kind StageKind
 }

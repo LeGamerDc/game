@@ -2,8 +2,10 @@
 
 > 本文档是 GAS 在 Scheduler 框架上的设计草稿，描述设计意图而非最终实现。
 > 基于 `docs/references/gas_survey.md` 的调研结论。
+>
+> **状态更新（2026-04-25）**：完整 GAS framework 不再计划作为 `game/` 的基础 package 落地。当前已将可复用的 Attribute / Modifier 聚合抽到 `attr/`；Ability、Effect、Buff、Cooldown、Cost、Stacking、Tag requirement 等业务强相关部分后续优先在 demo 层实现。本文件保留为设计参考和 Unreal GAS 映射资料。
 
-Last Updated: 2025-07
+Last Updated: 2026-04-25
 
 ---
 
@@ -1297,7 +1299,7 @@ func (gas *AbilitySystem) NextWakeup(now int64) int64
 | 8 | **AttrTable 的索引方式**：int32 kind → 数组下标？还是 map？ | 属性数量通常 <50，dense array 更高效 |
 | 9 | **BuffTable 的 min-heap 实现**：复用 `lib/` 中的数据结构？还是参考 GAS 的 HeapIndexMap？ | 需要支持 Update（修改 deadline）和 Remove（按 instanceID） |
 | 10 | **TagState 与 tag/ 包的集成**：直接使用 tag.Tag？还是简化为 map[int32]int32？ | 需要层级匹配时用 tag/，只需精确匹配时用简单 map |
-| 11 | **GAS 包的位置**：放 `gas/` 顶层？还是 `en/gas/`？ | 取决于 GAS 是否与引擎耦合 |
+| 11 | **GAS 包的位置**：放 `gas/` 顶层？还是 `en/gas/`？ | 已倾向不放入 `game/` 基础库；完整 GAS 放 demo 层，基础库只保留 `attr/` |
 | 12 | **泛型参数**：GAS 构建块是否需要泛型？ | AttrTable/BuffTable 可以是具体类型，AbilitySystem 可能需要泛型以适配用户的 Effect/Signal 类型 |
 | 13 | **Stock Buff 的 PeriodicAction 回调签名**：action 函数是否需要返回值（如产出的 Effect 描述）？ | 与问题 6 相关——如果 Buff 只允许修改 owner，action 签名简单；如果允许跨实体交互，需要更丰富的返回类型 |
 

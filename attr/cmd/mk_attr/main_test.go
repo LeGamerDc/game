@@ -136,6 +136,7 @@ Mana = { id = 0, type = "instant" }
 	_, err := ParseConfigs([]string{p1, p2})
 	require.Error(t, err)
 }
+
 // ---------------------------------------------------------------------------
 // Validate - valid config
 // ---------------------------------------------------------------------------
@@ -334,6 +335,7 @@ func TestValidate_UnexportedFieldName(t *testing.T) {
 	err := Validate(cfgs)
 	require.Error(t, err)
 }
+
 // ---------------------------------------------------------------------------
 // Generate - valid Go output for demo config
 // ---------------------------------------------------------------------------
@@ -369,19 +371,19 @@ func TestGenerate_ValidGo(t *testing.T) {
 		"DemoAttrKey_Hp",
 		"DemoDirty_Hp",
 		"GetDemoAttrs",
-		"gas.AttributeSet",
-		"gas.AttributeValue",
-		"gas.AttrMap",
+		"attr.AttributeSet",
+		"attr.Value",
+		"attr.Map",
 	} {
 		assert.Contains(t, src, want, "missing expected string %q in generated output", want)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Generate - only instant values
+// Generate - only scalar values
 // ---------------------------------------------------------------------------
 
-func TestGenerate_OnlyInstant(t *testing.T) {
+func TestGenerate_OnlyScalar(t *testing.T) {
 	cfg := SetConfig{
 		SetID: 1,
 		Fields: map[string]FieldDef{
@@ -401,7 +403,7 @@ func TestGenerate_OnlyInstant(t *testing.T) {
 
 	assert.Contains(t, src, "ScoreAttributeSet")
 
-	// The struct should not contain gas.AttributeValue fields.
+	// The struct should not contain attr.Value fields.
 	structIdx := strings.Index(src, "type ScoreAttributeSet struct")
 	if structIdx >= 0 {
 		rest := src[structIdx:]
@@ -410,8 +412,8 @@ func TestGenerate_OnlyInstant(t *testing.T) {
 			closeBrace := strings.Index(rest[openBrace:], "}")
 			if closeBrace >= 0 {
 				structBody := rest[openBrace : openBrace+closeBrace+1]
-				assert.NotContains(t, structBody, "gas.AttributeValue",
-					"struct body should not contain gas.AttributeValue when there are no attribute fields")
+				assert.NotContains(t, structBody, "attr.Value",
+					"struct body should not contain attr.Value when there are no attribute fields")
 			}
 		}
 	}
@@ -439,7 +441,7 @@ func TestGenerate_OnlyAttribute(t *testing.T) {
 	_, fmtErr := format.Source(buf.Bytes())
 	assert.NoError(t, fmtErr, "generated code is not valid Go:\n%s", src)
 
-	assert.Contains(t, src, "gas.AttributeValue",
+	assert.Contains(t, src, "attr.Value",
 		"output should contain AttributeValue fields")
 }
 
@@ -477,7 +479,7 @@ func TestGenerate_ExplicitFieldIDs(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGenerate_StructGroupsByType(t *testing.T) {
-	// Attribute has ID 0, Instant has ID 1 - struct should still group by type
+	// Attribute has ID 0, Scalar has ID 1 - struct should still group by type
 	cfg := SetConfig{
 		SetID: 1,
 		Fields: map[string]FieldDef{
@@ -495,12 +497,12 @@ func TestGenerate_StructGroupsByType(t *testing.T) {
 	_, fmtErr := format.Source(buf.Bytes())
 	assert.NoError(t, fmtErr, "generated code is not valid Go:\n%s", src)
 
-	// In the struct, InstantValue section should come before AttributeValue section
-	instantIdx := strings.Index(src, "// InstantValue")
+	// In the struct, ScalarValue section should come before AttributeValue section
+	scalarIdx := strings.Index(src, "// ScalarValue")
 	attrIdx := strings.Index(src, "// AttributeValue")
-	require.Greater(t, instantIdx, 0, "should have InstantValue comment")
+	require.Greater(t, scalarIdx, 0, "should have ScalarValue comment")
 	require.Greater(t, attrIdx, 0, "should have AttributeValue comment")
-	assert.Less(t, instantIdx, attrIdx, "InstantValue should come before AttributeValue in struct")
+	assert.Less(t, scalarIdx, attrIdx, "ScalarValue should come before AttributeValue in struct")
 }
 
 // ---------------------------------------------------------------------------

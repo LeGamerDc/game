@@ -66,7 +66,7 @@ const collectorMaxRetain = 128
 // 跳过 effect 数量为 0 的 block（无需 Apply）。
 //
 // 复杂度：O(B log B + B·T)，其中 B = BlockSize, T = Concurrency。
-func (sc *Scheduler[W, S, E, L, ST]) computeApplyAssignment() {
+func (sc *Scheduler[W, S, E, L]) computeApplyAssignment() {
 	c := sc.meta.Concurrency
 	bs := sc.meta.BlockSize
 

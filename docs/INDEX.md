@@ -4,7 +4,7 @@
 >
 > 本文件不替代 `memory/memory.md`（当前工作上下文），而是补充"所有文档在哪、是什么"。
 
-Last Updated: 2025-07
+Last Updated: 2026-04-25
 
 ---
 
@@ -14,7 +14,7 @@ Last Updated: 2025-07
 |------|------|--------|
 | `parallel.md` | 并行 tick 概念模型：BSP superstep、Logic=Owner 所有权、Think/Apply 两阶段、Effect 顺序无关性 | BSP, superstep, ownership, Think/Apply |
 | `scheduler.md` | Scheduler 实现级设计：并发/串行双模式、block-based effect 收集、LPT 负载均衡、StagedState、计算分解约束 | block collector, LPT, StagedState, ScheduleMeta |
-| `ability_system.md` | GAS 四模块设计草稿（AttrTable / BuffTable / AbilitySet / TagState），Buff/Running 统一，Modifier 定位，Effect 数据设计 | buff, modifier, attribute, ability |
+| `ability_system.md` | GAS 设计参考稿：完整 GAS 不再作为 `game/` 基础 package 落地，Attribute/Modifier 抽到 `attr/`，其余业务组合留给 demo | buff, modifier, attribute, ability |
 | `adaptation_guide.md` | 107 条逻辑链路适配分类指导手册，6 大分类 + 5 步判定流程 | adaptation, 6 categories, migration |
 
 ## references/ — 调研与理论

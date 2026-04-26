@@ -1,31 +1,34 @@
 # Todo — 当前任务执行清单
 
-Last Updated: 2026-04-24
+Last Updated: 2026-04-25
 
-## 当前任务：Scheduler StagedState 重设计首版实现
+## 当前任务：GAS / Attribute 边界重评估
 
 ### 讨论与确认
 
-- [x] 读取 memory，确认原主线为性能 demo，当前切换到 scheduler 协议设计讨论
-- [x] 读取 `sched/world.go`、并发/串行调度流程和现有 WatchState 文档
-- [x] 形成对 `Logic.Sum` / `Summarize` 方向的设计判断
-- [x] 根据新讨论修正判断：优先评估 Apply + double-buffered StagedState，不新增 Sum 阶段
-- [x] 采纳用户命名：使用 `StagedState`，不新增 `Touch`
-- [x] 编写并运行闭包捕获 mutable ref 的 microbenchmark
-
-### 实现
-
-- [x] 将 `WatchState` / `WatchOf` / `CommitWatches` 从 `sched` runtime 接口中剥离
-- [x] 增加 `StagedState`、`RefStage`、`StagePromoter.PromoteStages`
-- [x] 在 `ThinkCtx` / `CommitCtx` 增加 `WriteStage(ST)`
-- [x] 使用 `Concurrency` 个 `IndexMap[uint64, ST]` 收集 `WriteStage`
-- [x] 并发路径在 Think→Apply、Apply→下一轮 Think 两个阶段边界 promote
-- [x] 串行路径在 inline 阶段切换点 promote，并恢复嵌套调用前的 `stageRef`
-- [x] 更新 scheduler/parallel 设计文档和测试
+- [x] 读取 `docs/memory/memory.md`、`tasks.md`、`todo.md`
+- [x] 读取 `docs/INDEX.md`，定位 scheduler / GAS / attribute 相关文档
+- [x] 读取 `sched/world.go` 与 StagedState 实现，确认当前单一 `ST` + per-ref last-write-wins 语义
+- [x] 读取当前 `gas/`、`tools/mk_attr`、`demo/demo_attr.go`
+- [x] 参考 `/Users/dongcheng/Project/legamerdc/unreal-gas-analysis` 的 Attribute / Modifier / ActiveGE 调研
+- [x] 参考旧 `/Users/dongcheng/Project/legamerdc/gas` 的 Ability/Running/Buff 抽象
+- [x] 用户确认：移除当前 `gas/` framework 实现、落地 `attr/` package、StagedState 改为多域 API
+- [x] 实现 `sched.StageKind` + kind-keyed `WriteStage`
+- [x] 新增 `attr/` runtime package
+- [x] 迁移 `tools/mk_attr` 到 `attr/cmd/mk_attr`
+- [x] 删除 `gas/` framework 草稿和旧 `tools/mk_attr`
+- [x] 更新 demo attr 配置并重新生成 `demo/demo_attr.go`
+- [x] 更新设计文档、memory 与 docs index
 - [x] 运行 `go test ./...`
+
+### 待确认方案
+
+- [x] `game/` 不提供完整 GAS framework；Ability/Effect/Buff/Cost/Cooldown/Stacking 等放到 demo 业务层
+- [x] 新增独立 Attribute package，承接 AttributeSet 生成、AttrKey、Base/Current、Modifier Aggregator
+- [x] Scheduler StagedState 从单一 `ST` 改为 `(StageKind, any)` 多域 staged entry
 
 ### Notes
 
-- 当前实现只负责收集和 promote staged state；framework 层的 `[2]State` 双缓冲、dirty mirror 或结构共享策略尚未实现。
-- benchmark：direct ≈0.92ns/op，closure capture ref ≈0.92ns/op，ctx function field ≈2.29ns/op（Apple M5, Go 1.26.1）。
-- 暂不需要 `Touch` 这类独立 API；“唤醒 Apply 但没有业务 effect”的场景可先用特殊 effect 表达，未来再考虑优化。
+- `attr.Modifier.Source` 是 opaque `uint64`，不绑定 EffectHandle/Ability/Buff/Tag requirement。
+- `mk_attr` 接受 `scalar` 与 `attribute`；`instant` 暂作为 deprecated scalar 兼容。demo 中 HP/Mana 已改为 `attribute`。
+- `go test ./...` 通过。

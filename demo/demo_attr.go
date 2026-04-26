@@ -3,11 +3,11 @@
 package demo
 
 import (
-	"github.com/legamerdc/game/gas"
+	"github.com/legamerdc/game/attr"
 )
 
 // Compile-time interface check.
-var _ gas.AttributeSet = (*DemoAttributeSet)(nil)
+var _ attr.AttributeSet = (*DemoAttributeSet)(nil)
 
 // ---------- Set ID ----------
 
@@ -52,29 +52,27 @@ const (
 type DemoAttributeSet struct {
 	dirty uint64
 
-	// InstantValue
-	Hp   float64
-	Mana float64
-
 	// AttributeValue
-	MaxHp   gas.AttributeValue
-	MaxMana gas.AttributeValue
-	Attack  gas.AttributeValue
-	Defense gas.AttributeValue
+	Hp      attr.Value
+	Mana    attr.Value
+	MaxHp   attr.Value
+	MaxMana attr.Value
+	Attack  attr.Value
+	Defense attr.Value
 }
 
 // ---------- Bind ----------
 
-// GetDemoAttrs retrieves the typed *DemoAttributeSet from an AttrMap.
+// GetDemoAttrs retrieves the typed *DemoAttributeSet from an attr.Map.
 // Returns nil if the set is not registered.
-func GetDemoAttrs(m *gas.AttrMap) *DemoAttributeSet {
+func GetDemoAttrs(m *attr.Map) *DemoAttributeSet {
 	if s := m.Get(DemoSetID); s != nil {
 		return s.(*DemoAttributeSet)
 	}
 	return nil
 }
 
-// ---------- Interface: gas.AttributeSet ----------
+// ---------- Interface: attr.AttributeSet ----------
 
 func (s *DemoAttributeSet) SetID() uint32                { return DemoSetID }
 func (s *DemoAttributeSet) FieldCount() uint16           { return DemoFieldCount }
@@ -87,27 +85,39 @@ func (s *DemoAttributeSet) ClearDirty()                  { s.dirty = 0 }
 // Typed Accessors
 // ==============================================================
 
-// ---------- Hp (InstantValue) ----------
+// ---------- Hp (AttributeValue) ----------
 
-func (s *DemoAttributeSet) GetHp() float64 { return s.Hp }
-func (s *DemoAttributeSet) SetHp(v float64) {
+func (s *DemoAttributeSet) GetHp() attr.Value     { return s.Hp }
+func (s *DemoAttributeSet) GetHpBase() float64    { return s.Hp.Base }
+func (s *DemoAttributeSet) GetHpCurrent() float64 { return s.Hp.Current }
+func (s *DemoAttributeSet) SetHpBase(v float64) {
 	s.dirty |= DemoDirty_Hp
-	s.Hp = v
+	s.Hp.Base = v
+}
+func (s *DemoAttributeSet) SetHpCurrent(v float64) {
+	s.dirty |= DemoDirty_Hp
+	s.Hp.Current = v
 }
 
-// ---------- Mana (InstantValue) ----------
+// ---------- Mana (AttributeValue) ----------
 
-func (s *DemoAttributeSet) GetMana() float64 { return s.Mana }
-func (s *DemoAttributeSet) SetMana(v float64) {
+func (s *DemoAttributeSet) GetMana() attr.Value     { return s.Mana }
+func (s *DemoAttributeSet) GetManaBase() float64    { return s.Mana.Base }
+func (s *DemoAttributeSet) GetManaCurrent() float64 { return s.Mana.Current }
+func (s *DemoAttributeSet) SetManaBase(v float64) {
 	s.dirty |= DemoDirty_Mana
-	s.Mana = v
+	s.Mana.Base = v
+}
+func (s *DemoAttributeSet) SetManaCurrent(v float64) {
+	s.dirty |= DemoDirty_Mana
+	s.Mana.Current = v
 }
 
 // ---------- MaxHp (AttributeValue) ----------
 
-func (s *DemoAttributeSet) GetMaxHp() gas.AttributeValue { return s.MaxHp }
-func (s *DemoAttributeSet) GetMaxHpBase() float64        { return s.MaxHp.Base }
-func (s *DemoAttributeSet) GetMaxHpCurrent() float64     { return s.MaxHp.Current }
+func (s *DemoAttributeSet) GetMaxHp() attr.Value     { return s.MaxHp }
+func (s *DemoAttributeSet) GetMaxHpBase() float64    { return s.MaxHp.Base }
+func (s *DemoAttributeSet) GetMaxHpCurrent() float64 { return s.MaxHp.Current }
 func (s *DemoAttributeSet) SetMaxHpBase(v float64) {
 	s.dirty |= DemoDirty_MaxHp
 	s.MaxHp.Base = v
@@ -119,9 +129,9 @@ func (s *DemoAttributeSet) SetMaxHpCurrent(v float64) {
 
 // ---------- MaxMana (AttributeValue) ----------
 
-func (s *DemoAttributeSet) GetMaxMana() gas.AttributeValue { return s.MaxMana }
-func (s *DemoAttributeSet) GetMaxManaBase() float64        { return s.MaxMana.Base }
-func (s *DemoAttributeSet) GetMaxManaCurrent() float64     { return s.MaxMana.Current }
+func (s *DemoAttributeSet) GetMaxMana() attr.Value     { return s.MaxMana }
+func (s *DemoAttributeSet) GetMaxManaBase() float64    { return s.MaxMana.Base }
+func (s *DemoAttributeSet) GetMaxManaCurrent() float64 { return s.MaxMana.Current }
 func (s *DemoAttributeSet) SetMaxManaBase(v float64) {
 	s.dirty |= DemoDirty_MaxMana
 	s.MaxMana.Base = v
@@ -133,9 +143,9 @@ func (s *DemoAttributeSet) SetMaxManaCurrent(v float64) {
 
 // ---------- Attack (AttributeValue) ----------
 
-func (s *DemoAttributeSet) GetAttack() gas.AttributeValue { return s.Attack }
-func (s *DemoAttributeSet) GetAttackBase() float64        { return s.Attack.Base }
-func (s *DemoAttributeSet) GetAttackCurrent() float64     { return s.Attack.Current }
+func (s *DemoAttributeSet) GetAttack() attr.Value     { return s.Attack }
+func (s *DemoAttributeSet) GetAttackBase() float64    { return s.Attack.Base }
+func (s *DemoAttributeSet) GetAttackCurrent() float64 { return s.Attack.Current }
 func (s *DemoAttributeSet) SetAttackBase(v float64) {
 	s.dirty |= DemoDirty_Attack
 	s.Attack.Base = v
@@ -147,9 +157,9 @@ func (s *DemoAttributeSet) SetAttackCurrent(v float64) {
 
 // ---------- Defense (AttributeValue) ----------
 
-func (s *DemoAttributeSet) GetDefense() gas.AttributeValue { return s.Defense }
-func (s *DemoAttributeSet) GetDefenseBase() float64        { return s.Defense.Base }
-func (s *DemoAttributeSet) GetDefenseCurrent() float64     { return s.Defense.Current }
+func (s *DemoAttributeSet) GetDefense() attr.Value     { return s.Defense }
+func (s *DemoAttributeSet) GetDefenseBase() float64    { return s.Defense.Base }
+func (s *DemoAttributeSet) GetDefenseCurrent() float64 { return s.Defense.Current }
 func (s *DemoAttributeSet) SetDefenseBase(v float64) {
 	s.dirty |= DemoDirty_Defense
 	s.Defense.Base = v
@@ -163,13 +173,13 @@ func (s *DemoAttributeSet) SetDefenseCurrent(v float64) {
 // Generic Field Access (by FieldIndex)
 // ==============================================================
 
-// GetCurrent returns the effective value: InstantValue -> value, AttributeValue -> Current.
+// GetCurrent returns the effective value: ScalarValue -> value, AttributeValue -> Current.
 func (s *DemoAttributeSet) GetCurrent(field uint16) (float64, bool) {
 	switch field {
 	case DemoField_Hp:
-		return s.Hp, true
+		return s.Hp.Current, true
 	case DemoField_Mana:
-		return s.Mana, true
+		return s.Mana.Current, true
 	case DemoField_MaxHp:
 		return s.MaxHp.Current, true
 	case DemoField_MaxMana:
@@ -182,13 +192,13 @@ func (s *DemoAttributeSet) GetCurrent(field uint16) (float64, bool) {
 	return 0, false
 }
 
-// GetBase returns the base value: InstantValue -> value, AttributeValue -> Base.
+// GetBase returns the base value: ScalarValue -> value, AttributeValue -> Base.
 func (s *DemoAttributeSet) GetBase(field uint16) (float64, bool) {
 	switch field {
 	case DemoField_Hp:
-		return s.Hp, true
+		return s.Hp.Base, true
 	case DemoField_Mana:
-		return s.Mana, true
+		return s.Mana.Base, true
 	case DemoField_MaxHp:
 		return s.MaxHp.Base, true
 	case DemoField_MaxMana:
@@ -205,10 +215,10 @@ func (s *DemoAttributeSet) GetBase(field uint16) (float64, bool) {
 func (s *DemoAttributeSet) SetBase(field uint16, v float64) bool {
 	switch field {
 	case DemoField_Hp:
-		s.SetHp(v)
+		s.SetHpBase(v)
 		return true
 	case DemoField_Mana:
-		s.SetMana(v)
+		s.SetManaBase(v)
 		return true
 	case DemoField_MaxHp:
 		s.SetMaxHpBase(v)
@@ -230,10 +240,10 @@ func (s *DemoAttributeSet) SetBase(field uint16, v float64) bool {
 func (s *DemoAttributeSet) SetCurrent(field uint16, v float64) bool {
 	switch field {
 	case DemoField_Hp:
-		s.SetHp(v)
+		s.SetHpCurrent(v)
 		return true
 	case DemoField_Mana:
-		s.SetMana(v)
+		s.SetManaCurrent(v)
 		return true
 	case DemoField_MaxHp:
 		s.SetMaxHpCurrent(v)

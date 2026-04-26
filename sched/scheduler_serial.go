@@ -52,7 +52,7 @@ import (
 //
 // After serialProcess returns, caller must swap signal buffers to preserve
 // deferred signals in signalRead for the next tick.
-func (sc *Scheduler[W, S, E, L, ST]) serialProcess(world W, includeTimers bool, maxDepth int) {
+func (sc *Scheduler[W, S, E, L]) serialProcess(world W, includeTimers bool, maxDepth int) {
 	depth := 0
 	bs := uint64(sc.meta.BlockSize)
 
@@ -71,8 +71,8 @@ func (sc *Scheduler[W, S, E, L, ST]) serialProcess(world W, includeTimers bool, 
 
 	// ThinkCtx and CommitCtx are created once and reused across all
 	// recursive calls. Their Emit/Publish closures are set below.
-	thinkCtx := &ThinkCtx[W, S, E, ST]{World: world}
-	commitCtx := &CommitCtx[W, S, ST]{World: world}
+	thinkCtx := &ThinkCtx[W, S, E]{World: world}
+	commitCtx := &CommitCtx[W, S]{World: world}
 
 	// applyOne finds the target logic and calls Apply with a single effect.
 	// Apply does NOT increment depth — Think→Publish→Apply is one atomic
@@ -153,15 +153,15 @@ func (sc *Scheduler[W, S, E, L, ST]) serialProcess(world W, includeTimers bool, 
 		sc.promoteStages(world)
 		applyOne(ref, eff)
 	}
-	thinkCtx.WriteStage = func(state ST) {
-		sc.stageCollectors[0].Put(stageRef, state)
+	thinkCtx.WriteStage = func(kind StageKind, state StagedState) {
+		sc.stageCollectors[0].Put(stageKey{ref: stageRef, kind: kind}, state)
 	}
 	commitCtx.Emit = func(ref uint64, sig S) {
 		sc.promoteStages(world)
 		thinkSignal(ref, sig)
 	}
-	commitCtx.WriteStage = func(state ST) {
-		sc.stageCollectors[0].Put(stageRef, state)
+	commitCtx.WriteStage = func(kind StageKind, state StagedState) {
+		sc.stageCollectors[0].Put(stageKey{ref: stageRef, kind: kind}, state)
 	}
 
 	// ── Process initial frontier ─────────────────────────────────────────

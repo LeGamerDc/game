@@ -18,7 +18,7 @@ import (
 // FieldDef describes one field in an AttributeSet from the TOML config.
 type FieldDef struct {
 	ID   uint16 `toml:"id"`
-	Type string `toml:"type"` // "instant" or "attribute"
+	Type string `toml:"type"` // "scalar", "instant" (deprecated), or "attribute"
 }
 
 // SetConfig describes one AttributeSet definition from the TOML config.
@@ -29,9 +29,9 @@ type SetConfig struct {
 
 // fieldInfo holds resolved metadata about a single field for code generation.
 type fieldInfo struct {
-	Name      string
-	ID        uint16
-	IsInstant bool
+	Name     string
+	ID       uint16
+	IsScalar bool
 }
 
 // resolveFields converts cfg.Fields to a sorted slice of fieldInfo.
@@ -40,9 +40,9 @@ func resolveFields(cfg SetConfig) []fieldInfo {
 	fields := make([]fieldInfo, 0, len(cfg.Fields))
 	for name, def := range cfg.Fields {
 		fields = append(fields, fieldInfo{
-			Name:      name,
-			ID:        def.ID,
-			IsInstant: def.Type == "instant",
+			Name:     name,
+			ID:       def.ID,
+			IsScalar: isScalarType(def.Type),
 		})
 	}
 	sort.Slice(fields, func(i, j int) bool {
@@ -110,8 +110,8 @@ func Validate(cfg map[string]SetConfig) error {
 				return fmt.Errorf("set %q: field %q is not a valid Go exported identifier", name, fname)
 			}
 			// Type validation
-			if fdef.Type != "instant" && fdef.Type != "attribute" {
-				return fmt.Errorf("set %q: field %q has invalid type %q (must be \"instant\" or \"attribute\")", name, fname, fdef.Type)
+			if !isValidFieldType(fdef.Type) {
+				return fmt.Errorf("set %q: field %q has invalid type %q (must be \"scalar\", \"instant\", or \"attribute\")", name, fname, fdef.Type)
 			}
 			// ID range: must be < total
 			if int(fdef.ID) >= total {
@@ -132,6 +132,14 @@ func Validate(cfg map[string]SetConfig) error {
 		}
 	}
 	return nil
+}
+
+func isValidFieldType(t string) bool {
+	return isScalarType(t) || t == "attribute"
+}
+
+func isScalarType(t string) bool {
+	return t == "scalar" || t == "instant"
 }
 
 // isValidGoExportedIdent checks that s starts with an uppercase ASCII letter
@@ -177,11 +185,11 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	// Resolve fields sorted by ID.
 	fields := resolveFields(cfg)
 
-	// Split into instant and attribute for struct layout grouping.
-	var instants, attributes []fieldInfo
+	// Split into scalar and attribute for struct layout grouping.
+	var scalars, attributes []fieldInfo
 	for _, f := range fields {
-		if f.IsInstant {
-			instants = append(instants, f)
+		if f.IsScalar {
+			scalars = append(scalars, f)
 		} else {
 			attributes = append(attributes, f)
 		}
@@ -197,12 +205,12 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 
 	// ---- Import ----
 	p("import (\n")
-	p("\t\"github.com/legamerdc/game/gas\"\n")
+	p("\t\"github.com/legamerdc/game/attr\"\n")
 	p(")\n\n")
 
 	// ---- Compile-time interface check ----
 	p("// Compile-time interface check.\n")
-	p("var _ gas.AttributeSet = (*%s)(nil)\n\n", typeName)
+	p("var _ attr.AttributeSet = (*%s)(nil)\n\n", typeName)
 
 	// ---- Set ID ----
 	p("// ---------- Set ID ----------\n\n")
@@ -234,29 +242,29 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	}
 	p(")\n\n")
 
-	// ---- Struct (grouped by type: instant first, then attribute) ----
+	// ---- Struct (grouped by type: scalar first, then attribute) ----
 	p("// ---------- Struct ----------\n\n")
 	p("type %s struct {\n", typeName)
 	p("\tdirty uint64\n")
-	if len(instants) > 0 {
-		p("\n\t// InstantValue\n")
-		for _, f := range instants {
+	if len(scalars) > 0 {
+		p("\n\t// ScalarValue\n")
+		for _, f := range scalars {
 			p("\t%s float64\n", f.Name)
 		}
 	}
 	if len(attributes) > 0 {
 		p("\n\t// AttributeValue\n")
 		for _, f := range attributes {
-			p("\t%s gas.AttributeValue\n", f.Name)
+			p("\t%s attr.Value\n", f.Name)
 		}
 	}
 	p("}\n\n")
 
 	// ---- Bind ----
 	p("// ---------- Bind ----------\n\n")
-	p("// Get%sAttrs retrieves the typed *%s from an AttrMap.\n", prefix, typeName)
+	p("// Get%sAttrs retrieves the typed *%s from an attr.Map.\n", prefix, typeName)
 	p("// Returns nil if the set is not registered.\n")
-	p("func Get%sAttrs(m *gas.AttrMap) *%s {\n", prefix, typeName)
+	p("func Get%sAttrs(m *attr.Map) *%s {\n", prefix, typeName)
 	p("\tif s := m.Get(%sSetID); s != nil {\n", prefix)
 	p("\t\treturn s.(*%s)\n", typeName)
 	p("\t}\n")
@@ -264,7 +272,7 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	p("}\n\n")
 
 	// ---- Interface methods ----
-	p("// ---------- Interface: gas.AttributeSet ----------\n\n")
+	p("// ---------- Interface: attr.AttributeSet ----------\n\n")
 	p("func (s *%s) SetID() uint32 { return %sSetID }\n", typeName, prefix)
 	p("func (s *%s) FieldCount() uint16 { return %sFieldCount }\n", typeName, prefix)
 	p("func (s *%s) Dirty() uint64 { return s.dirty }\n", typeName)
@@ -272,13 +280,13 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	p("func (s *%s) IsFieldDirty(bit uint64) bool { return s.dirty&bit != 0 }\n", typeName)
 	p("func (s *%s) ClearDirty() { s.dirty = 0 }\n\n", typeName)
 
-	// ---- Typed Accessors (grouped: instant first, then attribute) ----
+	// ---- Typed Accessors (grouped: scalar first, then attribute) ----
 	p("// ==============================================================\n")
 	p("// Typed Accessors\n")
 	p("// ==============================================================\n\n")
 
-	for _, f := range instants {
-		p("// ---------- %s (InstantValue) ----------\n\n", f.Name)
+	for _, f := range scalars {
+		p("// ---------- %s (ScalarValue) ----------\n\n", f.Name)
 		p("func (s *%s) Get%s() float64 { return s.%s }\n", typeName, f.Name, f.Name)
 		p("func (s *%s) Set%s(v float64) {\n", typeName, f.Name)
 		p("\ts.dirty |= %sDirty_%s\n", prefix, f.Name)
@@ -287,7 +295,7 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	}
 	for _, f := range attributes {
 		p("// ---------- %s (AttributeValue) ----------\n\n", f.Name)
-		p("func (s *%s) Get%s() gas.AttributeValue { return s.%s }\n", typeName, f.Name, f.Name)
+		p("func (s *%s) Get%s() attr.Value { return s.%s }\n", typeName, f.Name, f.Name)
 		p("func (s *%s) Get%sBase() float64 { return s.%s.Base }\n", typeName, f.Name, f.Name)
 		p("func (s *%s) Get%sCurrent() float64 { return s.%s.Current }\n", typeName, f.Name, f.Name)
 		p("func (s *%s) Set%sBase(v float64) {\n", typeName, f.Name)
@@ -306,11 +314,11 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	p("// ==============================================================\n\n")
 
 	// GetCurrent
-	p("// GetCurrent returns the effective value: InstantValue -> value, AttributeValue -> Current.\n")
+	p("// GetCurrent returns the effective value: ScalarValue -> value, AttributeValue -> Current.\n")
 	p("func (s *%s) GetCurrent(field uint16) (float64, bool) {\n", typeName)
 	p("\tswitch field {\n")
 	for _, f := range fields {
-		if f.IsInstant {
+		if f.IsScalar {
 			p("\tcase %sField_%s:\n", prefix, f.Name)
 			p("\t\treturn s.%s, true\n", f.Name)
 		} else {
@@ -323,11 +331,11 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	p("}\n\n")
 
 	// GetBase
-	p("// GetBase returns the base value: InstantValue -> value, AttributeValue -> Base.\n")
+	p("// GetBase returns the base value: ScalarValue -> value, AttributeValue -> Base.\n")
 	p("func (s *%s) GetBase(field uint16) (float64, bool) {\n", typeName)
 	p("\tswitch field {\n")
 	for _, f := range fields {
-		if f.IsInstant {
+		if f.IsScalar {
 			p("\tcase %sField_%s:\n", prefix, f.Name)
 			p("\t\treturn s.%s, true\n", f.Name)
 		} else {
@@ -344,7 +352,7 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	p("func (s *%s) SetBase(field uint16, v float64) bool {\n", typeName)
 	p("\tswitch field {\n")
 	for _, f := range fields {
-		if f.IsInstant {
+		if f.IsScalar {
 			p("\tcase %sField_%s:\n", prefix, f.Name)
 			p("\t\ts.Set%s(v)\n", f.Name)
 			p("\t\treturn true\n")
@@ -363,7 +371,7 @@ func Generate(w io.Writer, pkg string, name string, cfg SetConfig) error {
 	p("func (s *%s) SetCurrent(field uint16, v float64) bool {\n", typeName)
 	p("\tswitch field {\n")
 	for _, f := range fields {
-		if f.IsInstant {
+		if f.IsScalar {
 			p("\tcase %sField_%s:\n", prefix, f.Name)
 			p("\t\ts.Set%s(v)\n", f.Name)
 			p("\t\treturn true\n")

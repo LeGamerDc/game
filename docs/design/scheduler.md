@@ -96,7 +96,7 @@ ProcessTick(world):
 
 ### Logic 查找
 
-Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `World` + `LogicProvider[L]` + `StagePromoter[ST]`），通过 `W.GetLogic(ref)` 查找 logic。getLogic 在 Think/Apply 阶段被并发调用，调用方须保证并发读安全。
+Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `World` + `LogicProvider[L]` + `StagePromoter`），通过 `W.GetLogic(ref)` 查找 logic。getLogic 在 Think/Apply 阶段被并发调用，调用方须保证并发读安全。
 
 ---
 
@@ -122,7 +122,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `World`
 3. **产出写入**：
    - `ctx.Publish(ref, eff)` → `effectCollectors[threadId]` 按 `hash(ref) % BlockSize` 分桶
    - `ctx.Emit(ref, sig)` → `signalWrite[threadId]` 按 `hash(ref) % BlockSize` 分桶
-   - `ctx.WriteStage(st)` → `stageCollectors[threadId]`，以 `thinkRef` 为 key 写入 `IndexMap`
+   - `ctx.WriteStage(kind, st)` → `stageCollectors[threadId]`，以 `(thinkRef, kind)` 为 key 写入 `IndexMap`
    - Think 返回 `delay > 0` → `timerWheel.set(threadId, blockId, ref, delay)`
 
 **Sort-based 分组**（替代旧的 map-based 分组）：per-thread `collectBuf` 收集同一 block 的所有 signal 到 flat slice，`slices.SortFunc` 按 ref 排序后线性扫描分组。每个 block 处理前 `flatBuf[:0]` 重置，无跨 block 状态泄漏。`refValInbox` 适配器将 `[]refVal[S]` 子切片零拷贝适配为 `Inbox[S]` 接口。
@@ -147,7 +147,7 @@ Scheduler 不维护 logic 注册表。构造时注入 `W`（同时实现 `World`
 2. 按 ref 排序后线性分组（同 Think Phase 的 sort-based 分组策略）
 3. 逐组调用 `logic.Apply(commitCtx, effects)`，`refValInbox` 适配器零拷贝传入
 4. Apply 产出的 signal → `signalWrite[threadId]`
-5. `ctx.WriteStage(st)` → `stageCollectors[threadId]`，以当前 Apply target ref 为 key 写入 `IndexMap`
+5. `ctx.WriteStage(kind, st)` → `stageCollectors[threadId]`，以 `(当前 Apply target ref, kind)` 为 key 写入 `IndexMap`
 
 **World Effect**：`RefWorld` 按 `hash(RefWorld) % BlockSize` 落入某个 block，作为该 block 的普通 target 参与 Apply。World Apply 内部串行（只有一个 owner：`RefWorld`），与其他 entity Apply 天然并行。不需要独立的 world effect 阶段。
 
@@ -327,8 +327,8 @@ Not allowed:
 
 **StagedState 更新流程**：
 
-- **并发模式**：Think/Apply 阶段 `WriteStage(st)` → per-thread `IndexMap[ref]st` → 阶段 barrier 后 `promoteStages` flatten 并调用 `World.PromoteStages(Inbox[RefStage[ST]])`。调用点为 Think→Apply 和 Apply→下一轮 Think。
-- **串行模式**：`WriteStage(st)` 写入 `stageCollectors[0]`；在 inline Emit/Publish/Think/Apply 边界调用 `promoteStages`，保持 truly inline 语义。
+- **并发模式**：Think/Apply 阶段 `WriteStage(kind, st)` → per-thread `IndexMap[(ref, kind)]st` → 阶段 barrier 后 `promoteStages` flatten 并调用 `World.PromoteStages(Inbox[RefStage])`。调用点为 Think→Apply 和 Apply→下一轮 Think。
+- **串行模式**：`WriteStage(kind, st)` 写入 `stageCollectors[0]`；在 inline Emit/Publish/Think/Apply 边界调用 `promoteStages`，保持 truly inline 语义。
 
 并发模式下，同一 superstep 内 Think 阶段 public state 静态（所有 Think 共享同一份 snapshot）；superstep 间 Apply 更新后对下一轮 Think 可见。
 
@@ -449,37 +449,40 @@ Effect recommended structure:
 
 ### 概述
 
-StagedState 是 Scheduler 提供给上层 framework 的阶段稳定数据提交机制。它不规定数据含义；WatchState、订阅摘要、空间/AOI membership、派生 public summary 等都可以作为某种 `ST` 使用。
+StagedState 是 Scheduler 提供给上层 framework 的阶段稳定数据提交机制。它不规定数据含义；WatchState、订阅摘要、空间/AOI membership、派生 public summary 等都可以作为不同 `StageKind` 的 staged state 使用。
 
 核心目标：
 
-- Think/Apply 可以提交“当前 owner 的 staged state”
+- Think/Apply 可以提交“当前 owner 某个 domain 的 staged state”
 - API 不暴露 ref 参数，Logic 无法写其他 owner 的 staged state
+- API 显式暴露 `StageKind`，多个 staged state domain 可以独立 last-write-wins
 - promote 在阶段 barrier 后串行执行，不需要像 Think/Apply 一样并行化
-- WatchState 不再是 `sched` runtime 概念，而是 framework 在 `ST` 上构建的一个用例
+- WatchState 不再是 `sched` runtime 概念，而是 framework 在某个 `StageKind` 上构建的一个用例
 
 ### 接口设计
 
 ```
+StageKind int32
 StagedState interface{}
 
-RefStage[ST] struct {
+RefStage struct {
     RefId uint64
-    State ST
+    Kind  StageKind
+    State StagedState
 }
 
-StagePromoter[ST] interface {
-    PromoteStages(Inbox[RefStage[ST]])
+StagePromoter interface {
+    PromoteStages(Inbox[RefStage])
 }
 ```
 
 `ThinkCtx` 和 `CommitCtx` 都暴露：
 
 ```
-WriteStage func(ST)
+WriteStage func(StageKind, StagedState)
 ```
 
-`WriteStage` 不接受 ref。Scheduler 在调用 Logic 前更新闭包捕获的当前 ref：Think 阶段为 `thinkRef`，Apply 阶段为 `applyRef`。因此 Logic 只能提交自身 owner 的 staged state。
+`WriteStage` 不接受 ref。Scheduler 在调用 Logic 前更新闭包捕获的当前 ref：Think 阶段为 `thinkRef`，Apply 阶段为 `applyRef`。因此 Logic 只能提交自身 owner 的 staged state，但可以用 `StageKind` 区分 WatchBits、AOI membership、public attr summary 等互不相干的 staged domain。
 
 ### 并发模式：阶段边界 Promote
 
@@ -487,19 +490,19 @@ WriteStage func(ST)
 
 ```
 Think Phase (parallel)
-  ├─ Logic.Think → ctx.WriteStage(st)
-  │   └─ stageCollectors[threadId].Put(thinkRef, st)
+  ├─ Logic.Think → ctx.WriteStage(kind, st)
+  │   └─ stageCollectors[threadId].Put((thinkRef, kind), st)
   │
   Think Barrier ──────────────────────────
   │
   promoteStages:
   │  flatten stageCollectors[0..C] → stageCommitBuf
-  │  world.PromoteStages(sliceInbox[RefStage[ST]](stageCommitBuf))
+  │  world.PromoteStages(sliceInbox[RefStage](stageCommitBuf))
   │  清空所有 stageCollectors
   │
-  Apply Phase (parallel)
-  ├─ Logic.Apply → ctx.WriteStage(st)
-  │   └─ stageCollectors[threadId].Put(applyRef, st)
+Apply Phase (parallel)
+  ├─ Logic.Apply → ctx.WriteStage(kind, st)
+  │   └─ stageCollectors[threadId].Put((applyRef, kind), st)
   │
   Apply Barrier ──────────────────────────
   │
@@ -511,10 +514,10 @@ Think Phase (parallel)
 
 **关键数据结构**：
 
-- `stageCollectors []IndexMap[uint64, ST]`：per-thread 收集缓冲。同一 owner 同一阶段多次 `WriteStage` 时 last-write-wins。
-- `stageCommitBuf []RefStage[ST]`：预分配的 flatten 缓冲，避免每次 promote 分配。
-- `RefStage[ST]`：`{RefId uint64, State ST}` 将 staged state 更新与 Logic ref 关联。
-- `StagePromoter[ST]`：`PromoteStages(Inbox[RefStage[ST]])`，由 World/framework 实现。
+- `stageCollectors []IndexMap[stageKey, StagedState]`：per-thread 收集缓冲。同一 owner + kind 同一阶段多次 `WriteStage` 时 last-write-wins。
+- `stageCommitBuf []RefStage`：预分配的 flatten 缓冲，避免每次 promote 分配。
+- `RefStage`：`{RefId uint64, Kind StageKind, State StagedState}` 将 staged state 更新与 Logic ref/domain 关联。
+- `StagePromoter`：`PromoteStages(Inbox[RefStage])`，由 World/framework 实现。
 
 ### 串行模式：Inline 边界 Promote
 
@@ -528,17 +531,16 @@ Think Phase (parallel)
 
 ### Scheduler 类型参数
 
-Scheduler 现有 5 个类型参数：`Scheduler[W, S, E, L, ST]`
+Scheduler 现有 4 个类型参数：`Scheduler[W, S, E, L]`
 
-- `W`：`World + LogicProvider[L] + StagePromoter[ST]`
+- `W`：`World + LogicProvider[L] + StagePromoter`
 - `S`：`SignalI`
 - `E`：`EffectI`
-- `L`：`Logic[W, S, E, ST]`
-- `ST`：`StagedState`
+- `L`：`Logic[W, S, E]`
 
 ### WatchState 作为 framework 用例
 
-WatchState 可以由 framework 定义为 `ST` 的一部分，例如 `UnitStage{Watch WatchBits, AOI CellID, Public AttrSummary}`。World/framework 在 `PromoteStages` 中把 staged state 写入自己的双缓冲或版本化视图，并提供 `WatchOf(ref)` 这类查询方法给具体 `W` 类型。Scheduler 不再知道 `WatchState` 或 `WatchOf`。
+WatchState 可以由 framework 绑定到某个 `StageKind`，例如 `StageWatchBits`；AOI membership 与 public attribute summary 可分别使用其他 `StageKind`。World/framework 在 `PromoteStages` 中按 kind 分发，把 staged state 写入自己的双缓冲或版本化视图，并提供 `WatchOf(ref)` 这类查询方法给具体 `W` 类型。Scheduler 不再知道 `WatchState` 或 `WatchOf`。
 
 ---
 

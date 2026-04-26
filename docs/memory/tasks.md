@@ -1,17 +1,16 @@
 # Tasks
 
-Last Updated: 2026-04-24
+Last Updated: 2026-04-25
 
 ## Active
 
 - [ ] 性能 Demo 开发：验证 scheduler 并行性能，为博客投稿提供数据支撑
 - [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线
-- [ ] Game Ability System 设计：设计草稿第二版修订已完成，进入讨论确认阶段（确认设计方向 + 解决开放问题）
 
 ## Backlog
 
+- [ ] Demo 层 GAS/combat path：在业务 demo 中实现 Ability/Effect/Buff/Tag/Attribute 的端到端链路
 - [ ] gamedeveloper.com 博客投稿：初稿已完成（`docs/papers/blog_parallel_tick.md`），待性能数据后投稿
-- [ ] 端到端 Combat Path Demo：至少一个完整技能→伤害→buff→死亡链路在框架内运行
 - [ ] GDC 投稿准备：先行工作分析与价值评估已完成，待 benchmark + demo
 - [ ] 设计空间查询 API：World 需提供版本化只读空间索引接口
 - [ ] 设计外部输入注入点：网络请求如何在 tick 开始前转化为 Signal
@@ -25,6 +24,8 @@ Last Updated: 2026-04-24
 
 ## Done
 
+- [x] GAS / Attribute 边界重构：删除 `game/` 内完整 `gas/` framework 草稿，新增 `attr/` runtime 与 `attr/cmd/mk_attr`，demo 属性改为 `attr.Value`，`go test ./...` 通过 (2026-04-25)
+- [x] Scheduler StagedState 多域设计与实现：移除 `ST` 类型参数，改为 `StageKind` + `StagedState any` + `(ref, kind)` last-write-wins，新增多 kind 测试，`go test ./...` 通过 (2026-04-25)
 - [x] Scheduler StagedState 重设计首版实现：WatchState 移出 runtime，新增 `WriteStage` / `PromoteStages`，并发/串行路径阶段 promote，闭包 benchmark 与 `go test ./...` 通过 (2026-04-24)
 - [x] mk_attr 显式 field ID 改造 + demo Makefile：TOML 格式改为 { id, type }，代码生成使用显式 ID，demo Makefile gen-attr target，21 个测试通过 (2026-07-15)
 - [x] Think 调用合并优化：thinkWorker/serialProcess 归并遍历 timer+signal，每个 logic 每个 superstep 最多一次 Think 调用；串行模式初始 frontier 信号批量化；44 个测试通过 (2026-04-08)

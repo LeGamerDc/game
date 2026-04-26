@@ -1,23 +1,28 @@
 # Memory
 
-Last Updated: 2026-04-24
+Last Updated: 2026-04-25
 
 ## Current Focus
 
-Scheduler StagedState 重设计已完成首版实现，等待 review。性能 demo 暂时让位。
+GAS / Attribute / Scheduler 边界重构已完成：`game/` 不再保留完整 `gas/` framework，Attribute/Modifier 聚合已抽为 `attr/` 基础 package；Scheduler staged state 已改为多域 `StageKind` API。下一步主线可回到 demo/benchmark，或在 demo 层实现具体 GAS/combat path。
 
 ## Latest State
 
-- **StagedState 已实现首版**：`sched` 已移除 `WatchState` / `WatchOf` / `CommitWatches`，改为 `StagedState` 类型参数、`ctx.WriteStage(ST)`、`RefStage[ST]`、`StagePromoter[ST].PromoteStages(...)`。
-- **WriteStage owner 安全**：`WriteStage` 不提供 ref 参数；scheduler 在 Think/Apply 调用前通过闭包捕获当前 owner ref（parallel: `thinkRef` / `applyRef`；serial: 可恢复的 `stageRef`），防止 Logic 写其他 owner 的 staged state。
-- **Promote 实现**：每个 worker 使用一个 `IndexMap[uint64, ST]` 收集 staged state；阶段 barrier 后串行 flatten 并调用 `PromoteStages`。并发路径在 Think→Apply、Apply→下一轮 Think 两处 promote；串行路径在 inline 阶段切换点 promote。
+- **StagedState 已改为多域 API**：`sched` 使用 `StageKind int32` + `StagedState any`，`ctx.WriteStage(kind, state)`，`RefStage{RefId, Kind, State}`，`StagePromoter.PromoteStages(Inbox[RefStage])`。Scheduler 不再有 `ST` 类型参数。
+- **WriteStage owner 安全**：`WriteStage` 不提供 ref 参数；scheduler 在 Think/Apply 调用前通过闭包捕获当前 owner ref（parallel: `thinkRef` / `applyRef`；serial: 可恢复的 `stageRef`），防止 Logic 写其他 owner 的 staged state；`StageKind` 只区分同 owner 的 staged domain。
+- **Promote 实现**：每个 worker 使用一个 `IndexMap[stageKey, StagedState]` 收集 staged state；`stageKey=(ref, kind)`，同 owner+kind 同阶段 last-write-wins。阶段 barrier 后串行 flatten 并调用 `PromoteStages`。
 - **闭包 benchmark 结果**：`WriteStage` 闭包捕获 mutable ref 本身约 0.92ns/op；通过 ctx 函数字段调用约 2.29ns/op，成本可接受。
 - **Scheduler 已实现**：代码在 `sched/` 包，包含并发/串行双模式、自动切换、timer wheel、block-based effect 收集、LPT 负载均衡、StagedState 机制。`go test ./...` 通过。
 - **Think 调用合并优化已完成**：`thinkWorker`（并行）和 `serialProcess`（串行）都通过归并遍历（merge-iteration）timer refs + signal flatBuf，保证每个 logic 在初始 frontier 中最多一次 Think 调用。Timer 是纯唤醒机制，被 signal 吸收；串行模式初始 frontier 也做了 signal 批量化，两种模式语义一致。
-- **接口定义**：`sched/world.go`（Logic、ThinkCtx、CommitCtx、World、StagedState、StagePromoter、Inbox 等）。
-- **Scheduler 5 个类型参数**：`Scheduler[W, S, E, L, ST]`。Logic 4 个参数 `Logic[W, S, E, ST]`（WorldView 已移除）。
+- **接口定义**：`sched/world.go`（Logic、ThinkCtx、CommitCtx、World、StageKind、StagedState、StagePromoter、Inbox 等）。
+- **Scheduler 4 个类型参数**：`Scheduler[W, S, E, L]`。Logic 3 个参数 `Logic[W, S, E]`（WorldView 与 `ST` 均已移除）。
 - **设计文档已对齐**：`docs/design/parallel.md`（概念与理论）、`docs/design/scheduler.md`（实现级设计）。
 - **scheduler.md 新增"计算分解约束"章节**：任何依赖双方状态的公式必须分解为 Source 端函数和 Target 端函数，由 Effect 数据连接。
+- **`gas/` framework 已移除**：上一轮未提交的 `AbilitySystem`、`TagState`、`AbilitySet`、`ActiveEffectTable` 等草稿已删除；完整 GAS 未来放 demo 业务层。
+- **`attr/` package 已新增**：`attr.Value`、`attr.Map`、`attr.Table`、`attr.Modifier`、Unreal-style Add/Mul/Div/Override channel aggregation、可选 Attribute hooks（PreBase/PreCurrent/PostCurrent）已实现。
+- **mk_attr 已迁移**：旧 `tools/mk_attr` 删除，新路径为 `attr/cmd/mk_attr`；生成代码导入 `github.com/legamerdc/game/attr`。`demo/Makefile` 已更新。
+- **demo 属性已再生成**：`demo/cfg/attr.toml` 中 HP/Mana 改为 `attribute`，生成的 `demo/demo_attr.go` 所有字段使用 `attr.Value`。
+- **验证通过**：`go test ./...` 通过。
 - **ability_system.md 完成第二版修订**：统一 Buff/Running 为 thinkable Buff interface、澄清 Modifier 定位、新增 Effect 数据设计指导、17 个开放问题已列出。
 - **博客初稿已完成**：`docs/papers/blog_parallel_tick.md`（gamedeveloper.com 投稿），待性能数据验证后再提交。
 - **GAS 调研完成**：`docs/references/gas_survey.md` + `docs/tmp/research_*.md`（属性、效果、能力、Cues/Targeting 四篇）。
@@ -41,18 +46,17 @@ Scheduler StagedState 重设计已完成首版实现，等待 review。性能 de
 - 串行模式 truly inline（递归闭包，非 collect-then-cascade）。
 - 双缓冲 Signal Collectors。无 per-logic 去重。
 - 每个 logic 每个 superstep 最多一次 Think 调用（归并遍历 timer+signal）。Timer 无数据，被 signal 吸收；纯 timer → Think(nil)，有 signal → Think(signals)。串行模式初始 frontier 也做信号批量化，与并行模式语义一致。
-- StagedState：`WriteStage(ST)` 提交当前 owner 的阶段稳定状态，阶段边界 `PromoteStages` 串行提交；WatchState 移出 scheduler runtime，作为 framework 层 staged state 用例。
+- StagedState：`WriteStage(StageKind, StagedState)` 提交当前 owner 某个 staged domain 的阶段稳定状态，阶段边界 `PromoteStages` 串行提交；WatchState 移出 scheduler runtime，作为 framework 层 staged state 用例。
 - **WorldView 已移除**：Think 和 Apply 阶段使用同一 W 类型（约束为 `World + LogicProvider + StagePromoter`）。原 WorldView 隔离价值极低（仅阻止调用 GetWorldView()），且无法通过 type parameter 注入自定义受限类型。移除后消除了 interface boxing 开销。
 
-### GAS 设计决策
+### Attribute / GAS 边界决策
 
-- **Buff 和 Running 统一**：统一为 thinkable Buff interface（ID/OnApply/OnRemove/OnStack/Think），由 BuffTable 管理。Running ability 实现为持续型 Buff，消除了独立的 Running 概念。
-- **Modifier 是 AttrTable 内部的贡献记录**：不是独立实体。生命周期由 Buff.OnApply/OnRemove 管理（添加/移除 Modifier），AttrTable 负责聚合计算。
+- **GAS 不作为 `game/` 基础框架实现**：Ability、Effect、Buff、Cooldown、Cost、Stacking policy、Tag requirement 等都与具体业务耦合，未来优先在 demo 中和业务逻辑一起实现。
+- **Attribute 是独立基础 package**：`attr/` 提供 AttributeSet 生成、AttrKey、Base/Current、Modifier Aggregator 等基础能力；生成器位于 `attr/cmd/mk_attr`。
+- **Modifier 是 Attribute 聚合层的贡献记录**：Modifier/Channel/Op/Aggregator 是基础设施；其 Source 是 opaque `uint64`，stack 规则、tag 条件、effect 生命周期不绑定到 `attr`。
 - **计算分解约束**：任何依赖双方状态的公式必须分解为 Source 端函数和 Target 端函数，由 Effect 数据连接。这是 parallel tick 的核心约束。
 - **Effect 数据设计**：携带中间结果（如 rawDamage）+ 少量 source 参数（如 penetration、element），不携带 source 全部状态。Source 端在 Think 阶段计算并打包，Target 端在 Apply 阶段用自身状态完成最终计算。
-- **Scheduler 协议层无需变更**：GAS 工作集中在 Logic 内部架构，不需要新的协议原语。所有 GAS 概念要么映射为 Effect/Signal 数据，要么是 Logic 内部的私有实现细节。
-- **GAS 作为构建块**：AttrTable + BuffTable + AbilitySet + TagState 四个独立模块，由用户组装为 AbilitySystem，不是侵入式框架。
-- **attr.toml 显式 field ID**：attr.toml 使用显式 field ID（`{ id = N, type = "instant"|"attribute" }`），不再依赖 list 顺序；生成的 Go 代码使用显式常量值而非 iota；struct 仍按 instant/attribute 分组排列。
+- **attr.toml 显式 field ID**：attr.toml 使用显式 field ID（`{ id = N, type = "scalar"|"attribute" }`；`instant` 暂兼容为 deprecated scalar），不再依赖 list 顺序；生成的 Go 代码使用显式常量值而非 iota。
 
 ### 已关闭的设计方向
 
@@ -66,31 +70,17 @@ Scheduler StagedState 重设计已完成首版实现，等待 review。性能 de
 
 ### Scheduler 层
 
-- Framework 层具体如何用 `StagedState` 实现双缓冲 WatchState/订阅表：dirty mirror、全量 copy、结构共享三种策略尚未落定。
+- Framework 层具体如何用多域 `StagedState` 实现双缓冲 WatchState/订阅表：dirty mirror、全量 copy、结构共享三种策略尚未落定。
 - 是否需要提供标准 StagedState helper（如 WatchBits、AOI membership、AttrSummary）仍未决定。
 - 阶段稳定数据的通用抽象：除 WatchState 外，是否也覆盖订阅表、空间索引 membership、可见性/AOI、派生 public summary、dirty attribute projection。
 - 空间查询 API：World 需提供版本化只读空间索引接口。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
 - Worker pool：替代每 superstep 创建 goroutine（代码中已有 TODO）。
 
-### GAS 设计层
+### Attribute 设计层
 
-- Modifier Channel 数量：初版是否只支持单通道？（倾向单通道，预留扩展）
-- AttrTable 的 Public State 暴露方式：World 如何读取 Current？（需与空间查询 API 一起设计）
-- 死亡判定的位置：Apply Flush 中检测 HP<=0 → Emit 死亡 Signal？还是 Think 中？
-- AbilitySystem 应该有多"薄"：编排器 vs 仅持有引用（倾向薄层编排器）
-- Buff 的 Value 与 StackCount 的关系：固定线性 vs 自定义函数（倾向默认线性 + 可扩展）
-- Buff 跨实体交互（荆棘反伤等）：Buff.Think 返回 action 列表由 Logic 转发 vs 扩展 BuffCtx 提供 Publish
-- Buff 序列化/存档：类型注册表 + Buff ID → factory 映射
-
-### GAS 实现层
-
-- AttrTable 索引方式：int32 kind → dense array（属性数量通常 <50）
-- BuffTable min-heap 实现：复用 `lib/` 还是参考 HeapIndexMap
-- TagState 与 `tag/` 包的集成：层级匹配用 tag/，精确匹配用简单 map
-- GAS 包的位置：`gas/` 顶层 vs `en/gas/`
-- 泛型参数：AttrTable/BuffTable 具体类型 vs AbilitySystem 泛型化
-- Stock Buff 的 PeriodicAction 回调签名
+- `instant` field type 目前仅兼容为 deprecated scalar；未来是否完全删除兼容尚未决定。
+- AttrTable/Aggregator 索引方式：当前 map[AttrKey][]Modifier 可用，但长期可考虑按 generated field count 做 dense storage 与 lazy aggregator。
 
 ### 与其他系统的关系
 
@@ -114,10 +104,14 @@ Scheduler StagedState 重设计已完成首版实现，等待 review。性能 de
 - `docs/design/adaptation_guide.md`
 - `docs/design/ability_system.md`
 - `docs/references/gas_survey.md`
+- `/Users/dongcheng/Project/legamerdc/unreal-gas-analysis`
+- `/Users/dongcheng/Project/legamerdc/gas`
 - `docs/papers/blog_parallel_tick.md`
-- `gas/attribute.go`
-- `tools/mk_attr/main.go`
-- `tools/mk_attr/main_test.go`
+- `attr/attribute.go`
+- `attr/modifier.go`
+- `attr/attribute_test.go`
+- `attr/cmd/mk_attr/main.go`
+- `attr/cmd/mk_attr/main_test.go`
 - `demo/cfg/attr.toml`
 - `demo/Makefile`
 - `demo/demo_attr.go`
