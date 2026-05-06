@@ -1,6 +1,9 @@
 package demo
 
-import "github.com/legamerdc/game/sched"
+import (
+	"github.com/LeGamerDc/golony"
+	"github.com/legamerdc/game/sched"
+)
 
 var _ sched.World = (*World)(nil)
 
@@ -9,6 +12,8 @@ type (
 		now     int64
 		version uint32
 		round   int32
+
+		units golony.Golony[Unit]
 	}
 
 	Signal struct{}
@@ -38,8 +43,13 @@ func (w *World) Round() int32 {
 
 func (w *World) PromoteStages(i sched.Inbox[sched.RefStage]) {}
 
-func (w *World) GetLogic(uint64) (*GAS, bool) {
-
+func (w *World) GetLogic(id uint64) (*Unit, bool) {
+	i := golony.FromU64[Unit](id)
+	fi, ok := w.units.Get(i)
+	if ok {
+		return fi.Pointer(), true
+	}
+	return nil, false
 }
 
 func Init() {

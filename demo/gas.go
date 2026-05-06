@@ -8,22 +8,27 @@ import (
 )
 
 var (
-	_ sched.Logic[*World, *Signal, *Effect] = (*GAS)(nil)
+	_ sched.Logic[*World, *Signal, *Effect] = (*Unit)(nil)
 )
 
 type (
-	GAS struct {
+	Vector struct {
+		X, Y float64
+	}
+
+	Unit struct {
 		// public
 		Id  uint64
 		ASC attr.Table
 		Tag tag.Tag
+		Pos Vector
 
 		// private
 		Abilities lib.HeapArrayMap[uint32, int64, *Ability]
 		Runnings  lib.HeapArrayMap[uint32, int64, *Running]
 	}
 
-	GASPublic struct {
+	UnitPublic struct {
 		ASC *attr.Table
 		Tag *tag.Tag
 	}
@@ -41,21 +46,21 @@ type (
 	RunningSpec struct{}
 )
 
-func (g *GAS) Public() *GASPublic {
-	return &GASPublic{
+func (g *Unit) Public() *UnitPublic {
+	return &UnitPublic{
 		ASC: &g.ASC,
 		Tag: &g.Tag,
 	}
 }
 
-func (g *GAS) ID() uint64 {
+func (g *Unit) ID() uint64 {
 	return g.Id
 }
 
-func (g *GAS) Think(ctx *sched.ThinkCtx[*World, *Signal, *Effect], i sched.Inbox[*Signal]) int64 {
+func (g *Unit) Think(ctx *sched.ThinkCtx[*World, *Signal, *Effect], i sched.Inbox[*Signal]) int64 {
 	return 0
 }
 
-func (g *GAS) Apply(ctx *sched.CommitCtx[*World, *Signal], i sched.Inbox[*Effect]) {
+func (g *Unit) Apply(ctx *sched.CommitCtx[*World, *Signal], i sched.Inbox[*Effect]) {
 
 }

@@ -1,9 +1,10 @@
 module github.com/legamerdc/game
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/LeGamerDc/golony v1.0.2
 	github.com/json-iterator/go v1.1.12
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/sys v0.42.0

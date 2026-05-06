@@ -1,14 +1,15 @@
 # Memory
 
-Last Updated: 2026-04-25
+Last Updated: 2026-04-27
 
 ## Current Focus
 
-GAS / Attribute / Scheduler 边界重构已完成：`game/` 不再保留完整 `gas/` framework，Attribute/Modifier 聚合已抽为 `attr/` 基础 package；Scheduler staged state 已改为多域 `StageKind` API。下一步主线可回到 demo/benchmark，或在 demo 层实现具体 GAS/combat path。
+Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 解释 Scheduler 的最小接入协议，重点沉淀 public/private data 的 Think/Apply 访问模式、Effect/Signal/StagedState 边界，以及 SerialRef 的 apply-only 语义。下一步主线可回到性能 demo/benchmark，或按该文档在 demo 层实现具体 combat path。
 
 ## Latest State
 
 - **StagedState 已改为多域 API**：`sched` 使用 `StageKind int32` + `StagedState any`，`ctx.WriteStage(kind, state)`，`RefStage{RefId, Kind, State}`，`StagePromoter.PromoteStages(Inbox[RefStage])`。Scheduler 不再有 `ST` 类型参数。
+- **Scheduler 接入文档已新增**：`sched/integration.md` 作为 demo/agent 接入手册，明确 Logic=Owner、public/private data 分层、Think/Apply 访问矩阵、Effect/Signal 分工、StagedState 接入方式、World 接入清单与常见误用检查表。
 - **WriteStage owner 安全**：`WriteStage` 不提供 ref 参数；scheduler 在 Think/Apply 调用前通过闭包捕获当前 owner ref（parallel: `thinkRef` / `applyRef`；serial: 可恢复的 `stageRef`），防止 Logic 写其他 owner 的 staged state；`StageKind` 只区分同 owner 的 staged domain。
 - **Promote 实现**：每个 worker 使用一个 `IndexMap[stageKey, StagedState]` 收集 staged state；`stageKey=(ref, kind)`，同 owner+kind 同阶段 last-write-wins。阶段 barrier 后串行 flatten 并调用 `PromoteStages`。
 - **闭包 benchmark 结果**：`WriteStage` 闭包捕获 mutable ref 本身约 0.92ns/op；通过 ctx 函数字段调用约 2.29ns/op，成本可接受。
@@ -47,6 +48,8 @@ GAS / Attribute / Scheduler 边界重构已完成：`game/` 不再保留完整 `
 - 双缓冲 Signal Collectors。无 per-logic 去重。
 - 每个 logic 每个 superstep 最多一次 Think 调用（归并遍历 timer+signal）。Timer 无数据，被 signal 吸收；纯 timer → Think(nil)，有 signal → Think(signals)。串行模式初始 frontier 也做信号批量化，与并行模式语义一致。
 - StagedState：`WriteStage(StageKind, StagedState)` 提交当前 owner 某个 staged domain 的阶段稳定状态，阶段边界 `PromoteStages` 串行提交；WatchState 移出 scheduler runtime，作为 framework 层 staged state 用例。
+- Demo 接入采用更严格的数据分层约束：private data 由 Think 读写，public data 由 Apply 作为权威提交点；Think 只读取 public 的稳定视图，public summary 通过 StagedState/World 查询暴露。
+- SerialRef 是 apply-only 的串行归并目标：没有普通 Logic 实体，不进入 Think/timer/signal；可以通过 `Publish(serialRef, effect)` 被归纳到一起 Apply。`RefWorld` 需先于一般 SerialRef 单独识别。
 - **WorldView 已移除**：Think 和 Apply 阶段使用同一 W 类型（约束为 `World + LogicProvider + StagePromoter`）。原 WorldView 隔离价值极低（仅阻止调用 GetWorldView()），且无法通过 type parameter 注入自定义受限类型。移除后消除了 interface boxing 开销。
 
 ### Attribute / GAS 边界决策
@@ -76,6 +79,7 @@ GAS / Attribute / Scheduler 边界重构已完成：`game/` 不再保留完整 `
 - 空间查询 API：World 需提供版本化只读空间索引接口。
 - 外部输入注入 API：网络请求如何在 tick 开始前转化为 Signal。
 - Worker pool：替代每 superstep 创建 goroutine（代码中已有 TODO）。
+- SerialRef 的 apply-only dispatch 需要在 demo/framework 层明确落地；当前普通 Apply 调用仍通过 `LogicProvider.GetLogic(ref)`，接入时不能把 SerialRef 混作可 Think 的普通实体。
 
 ### Attribute 设计层
 
@@ -96,6 +100,7 @@ GAS / Attribute / Scheduler 边界重构已完成：`game/` 不再保留完整 `
 - `sched/scheduler_parallel.go`
 - `sched/scheduler_serial.go`
 - `sched/scheduler_test.go`
+- `sched/integration.md`
 - `sched/wheel.go`
 - `sched/block_collector.go`
 - `sched/utils.go`

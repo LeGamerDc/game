@@ -146,8 +146,8 @@ func TestSchedulerEmptyTick(t *testing.T) {
 	world.now = 1
 	sc := newTestScheduler(defaultMeta(), world)
 	// Should not panic
-	sc.ProcessTick(world)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
+	sc.ProcessTick()
 }
 
 // TestSchedulerExternalSignalTriggersThink verifies that Emit → ProcessTick
@@ -172,7 +172,7 @@ func TestSchedulerExternalSignalTriggersThink(t *testing.T) {
 
 	sc.Emit(42, testSignal{value: 100})
 	sc.Emit(42, testSignal{value: 200})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if logic.thinkHits.Load() < 1 {
 		t.Fatalf("expected at least 1 Think call, got %d", logic.thinkHits.Load())
@@ -218,20 +218,20 @@ func TestSchedulerTimerActivation(t *testing.T) {
 
 	// Tick 1: external signal triggers Think, which registers delay=2
 	sc.Emit(10, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if thinkCount != 1 {
 		t.Fatalf("tick 1: expected 1 Think, got %d", thinkCount)
 	}
 
 	// Tick 2: timer not yet expired (delay=2 means tick+2)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 1 {
 		t.Fatalf("tick 2: timer should not fire yet, Think count = %d", thinkCount)
 	}
 
 	// Tick 3: timer expires, logic re-activated
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 2 {
 		t.Fatalf("tick 3: timer should fire, Think count = %d", thinkCount)
 	}
@@ -265,7 +265,7 @@ func TestSchedulerEffectDelivery(t *testing.T) {
 	world.addLogic(target)
 
 	sc.Emit(1, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if source.thinkHits.Load() < 1 {
 		t.Fatalf("source Think count = %d, want >= 1", source.thinkHits.Load())
@@ -304,7 +304,7 @@ func TestSchedulerThinkWriteStageVisibleToApply(t *testing.T) {
 	world.addLogic(target)
 
 	sc.Emit(1, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 }
 
 // TestSchedulerApplyWriteStageVisibleToNextThink verifies that staged state
@@ -342,7 +342,7 @@ func TestSchedulerApplyWriteStageVisibleToNextThink(t *testing.T) {
 	world.addLogic(reactor)
 
 	sc.Emit(1, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 }
 
 // TestSchedulerSerialWriteStageRestoresOwnerRef verifies that serial inline
@@ -370,7 +370,7 @@ func TestSchedulerSerialWriteStageRestoresOwnerRef(t *testing.T) {
 	world.addLogic(target)
 
 	sc.Emit(1, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if got := world.stage(1, testStageKind).value; got != 10 {
 		t.Fatalf("source stage = %d, want 10", got)
@@ -399,7 +399,7 @@ func TestSchedulerWriteStageKeepsKindsSeparate(t *testing.T) {
 	world.addLogic(logic)
 
 	sc.Emit(1, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if got := world.stage(1, testStageKind).value; got != 30 {
 		t.Fatalf("primary stage = %d, want last write 30", got)
@@ -450,7 +450,7 @@ func TestSchedulerSignalCascade(t *testing.T) {
 	world.addLogic(logicC)
 
 	sc.Emit(100, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// All three should have been activated in cascade order
 	if len(order) < 3 {
@@ -514,7 +514,7 @@ func TestSchedulerApplyEmitsSignal(t *testing.T) {
 	world.addLogic(reactor)
 
 	sc.Emit(10, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if reactorThinkCount < 1 {
 		t.Fatalf("reactor should think at least once from Apply signal, got %d", reactorThinkCount)
@@ -554,14 +554,14 @@ func TestSchedulerDeferOverflow(t *testing.T) {
 
 	// Tick 1: A thinks, emits to B, but MaxSupersteps=1 → B deferred
 	sc.Emit(1, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if thinkCount != 0 {
 		t.Fatalf("tick 1: B should not think (deferred), got %d", thinkCount)
 	}
 
 	// Tick 2: deferred signal should trigger B
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if thinkCount < 1 {
 		t.Fatalf("tick 2: B should think from deferred signal, got %d", thinkCount)
@@ -591,7 +591,7 @@ func TestSchedulerSelfEffect(t *testing.T) {
 	world.addLogic(logic)
 
 	sc.Emit(50, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if logic.thinkHits.Load() < 1 {
 		t.Fatalf("Think count = %d, want >= 1", logic.thinkHits.Load())
@@ -625,7 +625,7 @@ func TestSchedulerUnregisteredTargetDropped(t *testing.T) {
 
 	sc.Emit(1, testSignal{value: 0})
 	// Should not panic
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if logic.thinkHits.Load() < 1 {
 		t.Fatalf("Think count = %d, want >= 1", logic.thinkHits.Load())
@@ -666,25 +666,25 @@ func TestSchedulerTimerOverrideWithinTick(t *testing.T) {
 
 	// Tick 1: external signal → Think1 (delay=1, emit self) → Think2 (delay=3 override)
 	sc.Emit(5, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkRound < 2 {
 		t.Fatalf("tick 1: expected at least 2 thinks, got %d", thinkRound)
 	}
 
 	// Tick 2: delay=3 means 3 ticks from registration → should NOT fire
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkRound != 2 {
 		t.Fatalf("tick 2: should not fire, got %d", thinkRound)
 	}
 
 	// Tick 3: still waiting
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkRound != 2 {
 		t.Fatalf("tick 3: should not fire, got %d", thinkRound)
 	}
 
 	// Tick 4: delay=3 expires
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkRound < 3 {
 		t.Fatalf("tick 4: timer should fire, got %d", thinkRound)
 	}
@@ -719,7 +719,7 @@ func TestSchedulerMultipleLogicsParallel(t *testing.T) {
 		sc.Emit(id, testSignal{value: int(id)})
 	}
 
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// All logics should have been activated
 	for i, l := range logics {
@@ -798,7 +798,7 @@ func TestSchedulerTimerAndSignalSameLogic(t *testing.T) {
 
 	// Tick 1: external signal → Think, registers delay=1
 	sc.Emit(7, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 1 {
 		t.Fatalf("tick 1: expected 1 Think, got %d", thinkCount)
 	}
@@ -806,7 +806,7 @@ func TestSchedulerTimerAndSignalSameLogic(t *testing.T) {
 	// Tick 2: timer fires AND external signal arrives.
 	// Merge optimization: logic is called exactly once with signal in inbox.
 	sc.Emit(7, testSignal{value: 2})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 2 {
 		t.Fatalf("tick 2: expected exactly 2 total Thinks (1 per tick), got %d", thinkCount)
 	}
@@ -842,14 +842,14 @@ func TestSchedulerTimerAndSignalMergedInbox(t *testing.T) {
 
 	// Tick 1: signal activates, registers timer delay=1
 	sc.Emit(7, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if callNum != 1 {
 		t.Fatalf("tick 1: expected 1 call, got %d", callNum)
 	}
 
 	// Tick 2: timer + signal → merged into single Think with signal inbox
 	sc.Emit(7, testSignal{value: 2})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if callNum != 2 {
 		t.Fatalf("tick 2: expected exactly 1 more call (total 2), got %d", callNum)
 	}
@@ -897,7 +897,7 @@ func TestSchedulerEffectsFromMultipleSources(t *testing.T) {
 
 	sc.Emit(1, testSignal{value: 0})
 	sc.Emit(2, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if target.applyHits.Load() < 1 {
 		t.Fatalf("target Apply count = %d, want >= 1", target.applyHits.Load())
@@ -926,7 +926,7 @@ func TestSchedulerNoThinkForInactiveLogics(t *testing.T) {
 	world.addLogic(inactive)
 
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if active.thinkHits.Load() < 1 {
 		t.Fatalf("active logic Think count = %d, want >= 1", active.thinkHits.Load())
@@ -954,7 +954,7 @@ func TestSchedulerRemovedLogicNotActivated(t *testing.T) {
 
 	// Tick 1: activate and register timer
 	sc.Emit(5, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if logic.thinkHits.Load() < 1 {
 		t.Fatalf("tick 1: expected at least 1 Think, got %d", logic.thinkHits.Load())
 	}
@@ -968,7 +968,7 @@ func TestSchedulerRemovedLogicNotActivated(t *testing.T) {
 	thinksBefore := logic.thinkHits.Load()
 
 	// Tick 2: timer would fire + signal pending, but logic removed → no activation
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if logic.thinkHits.Load() != thinksBefore {
 		t.Fatalf("tick 2: removed logic should not be activated, thinks went from %d to %d",
 			thinksBefore, logic.thinkHits.Load())
@@ -995,11 +995,11 @@ func TestSchedulerMultipleTicksTimerRepeat(t *testing.T) {
 
 	// Tick 1: initial activation
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Ticks 2-5: timer fires every tick
 	for tick := 2; tick <= 5; tick++ {
-		sc.ProcessTick(world)
+		sc.ProcessTick()
 	}
 
 	if thinkCount < 5 {
@@ -1067,7 +1067,7 @@ func TestSchedulerConcurrentSafety(t *testing.T) {
 
 	// Run several ticks to exercise timer firing + signal cascade + effect delivery
 	for range 5 {
-		sc.ProcessTick(world)
+		sc.ProcessTick()
 	}
 
 	// Basic sanity: all logics should have been activated at least once
@@ -1098,11 +1098,11 @@ func TestSchedulerMultipleThinkCallsPerSuperstep(t *testing.T) {
 
 	// Tick 1: initial activation via signal
 	sc.Emit(7, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Tick 2: timer fires + external signal → merged into exactly 1 Think call
 	sc.Emit(7, testSignal{value: 2})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Both signals must have been delivered (one per tick, one per Think call)
 	if totalSignals != 2 {
@@ -1153,19 +1153,19 @@ func TestSchedulerDoubleBufferDefer(t *testing.T) {
 
 	// Tick 1: A runs, emits to B (deferred)
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if chainLen != 1 {
 		t.Fatalf("tick 1: expected chain length 1, got %d", chainLen)
 	}
 
 	// Tick 2: B runs (from deferred), emits to C (deferred)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if chainLen != 2 {
 		t.Fatalf("tick 2: expected chain length 2, got %d", chainLen)
 	}
 
 	// Tick 3: C runs (from deferred)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if chainLen != 3 {
 		t.Fatalf("tick 3: expected chain length 3, got %d", chainLen)
 	}
@@ -1207,7 +1207,7 @@ func TestSchedulerEffectOrderDeterministic(t *testing.T) {
 	world.addLogic(producer)
 	world.addLogic(consumer)
 	sc.Emit(100, testSignal{kind: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if len(received) != 3 {
 		t.Fatalf("expected 3 effects, got %d", len(received))
@@ -1254,7 +1254,7 @@ func TestSchedulerSignalOrderDeterministic(t *testing.T) {
 	world.addLogic(producer)
 	world.addLogic(consumer)
 	sc.Emit(100, testSignal{kind: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if len(received) != 3 {
 		t.Fatalf("expected 3 signals, got %d", len(received))
@@ -1305,7 +1305,7 @@ func TestSchedulerSerialBasicSignal(t *testing.T) {
 
 	sc.Emit(42, testSignal{value: 100})
 	sc.Emit(42, testSignal{value: 200})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if logic.thinkHits.Load() < 1 {
 		t.Fatalf("expected at least 1 Think call, got %d", logic.thinkHits.Load())
@@ -1361,7 +1361,7 @@ func TestSchedulerSerialInlineExecution(t *testing.T) {
 	world.addLogic(logicC)
 
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Inline semantics: Publish/Emit take effect immediately during Think.
 	// Expected DFS order:
@@ -1425,7 +1425,7 @@ func TestSchedulerSerialSignalCascade(t *testing.T) {
 	world.addLogic(logicC)
 
 	sc.Emit(100, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Serial DFS: A→B→C in strict order (inline Emit)
 	if len(order) != 3 {
@@ -1483,7 +1483,7 @@ func TestSchedulerSerialDepthLimit(t *testing.T) {
 
 	// Tick 1: A and B think, C is deferred
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if len(thinkOrder) != 2 {
 		t.Fatalf("tick 1: thinkOrder = %v, want [1, 2]", thinkOrder)
@@ -1493,7 +1493,7 @@ func TestSchedulerSerialDepthLimit(t *testing.T) {
 	}
 
 	// Tick 2: C processes the deferred signal
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if len(thinkOrder) != 3 {
 		t.Fatalf("tick 2: thinkOrder = %v, want [1, 2, 3]", thinkOrder)
@@ -1545,7 +1545,7 @@ func TestSchedulerSerialApplyEmitCascade(t *testing.T) {
 	world.addLogic(reactor)
 
 	sc.Emit(10, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Serial inline: source.Think → applier.Apply → reactor.Think
 	expected := []string{"source.Think", "applier.Apply", "reactor.Think"}
@@ -1584,19 +1584,19 @@ func TestSchedulerSerialTimerActivation(t *testing.T) {
 
 	// Tick 1: external signal → Think, registers delay=2
 	sc.Emit(10, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 1 {
 		t.Fatalf("tick 1: expected 1 Think, got %d", thinkCount)
 	}
 
 	// Tick 2: timer not yet expired
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 1 {
 		t.Fatalf("tick 2: timer should not fire yet, Think count = %d", thinkCount)
 	}
 
 	// Tick 3: timer expires
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount != 2 {
 		t.Fatalf("tick 3: timer should fire, Think count = %d", thinkCount)
 	}
@@ -1628,7 +1628,7 @@ func TestSchedulerSerialSelfEffect(t *testing.T) {
 	world.addLogic(logic)
 
 	sc.Emit(50, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Inline: Apply happens between Think.start and Think.end
 	expected := []string{"Think", "Apply", "Think.afterPublish"}
@@ -1661,7 +1661,7 @@ func TestSchedulerSerialUnregisteredTarget(t *testing.T) {
 
 	sc.Emit(1, testSignal{value: 0})
 	// Should not panic
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	if logic.thinkHits.Load() < 1 {
 		t.Fatalf("Think count = %d, want >= 1", logic.thinkHits.Load())
@@ -1710,19 +1710,19 @@ func TestSchedulerSerialDeferToNextTick(t *testing.T) {
 
 	// Tick 1: A thinks, emits to B (deferred)
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if chainLen != 1 {
 		t.Fatalf("tick 1: chain length = %d, want 1", chainLen)
 	}
 
 	// Tick 2: B thinks (from deferred), emits to C (deferred)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if chainLen != 2 {
 		t.Fatalf("tick 2: chain length = %d, want 2", chainLen)
 	}
 
 	// Tick 3: C thinks (from deferred)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if chainLen != 3 {
 		t.Fatalf("tick 3: chain length = %d, want 3", chainLen)
 	}
@@ -1748,11 +1748,11 @@ func TestSchedulerSerialTimerReregistration(t *testing.T) {
 
 	// Tick 1: initial activation
 	sc.Emit(1, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Ticks 2-5: timer fires every tick
 	for tick := 2; tick <= 5; tick++ {
-		sc.ProcessTick(world)
+		sc.ProcessTick()
 	}
 
 	if thinkCount < 5 {
@@ -1799,7 +1799,7 @@ func TestSchedulerParallelToSerial(t *testing.T) {
 	}
 	world.addLogic(reactor)
 
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// Reactor should have been activated (either in parallel round 2 or serial path)
 	if atomic.LoadInt64(&reactorThinkCount) < 1 {
@@ -1861,7 +1861,7 @@ func TestSchedulerSerialDepthBudgetShared(t *testing.T) {
 
 	// Tick 1: parallel round consumes 5 signals; serial gets maxDepth=1.
 	// A activates, emits to B; B is deferred.
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// A should have been activated; B should be deferred (not yet activated).
 	aActivated := false
@@ -1878,7 +1878,7 @@ func TestSchedulerSerialDepthBudgetShared(t *testing.T) {
 	}
 
 	// Tick 2: deferred signal activates B
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	bActivated := false
 	for _, id := range serialChain {
 		if id == 102 {
@@ -1897,8 +1897,8 @@ func TestSchedulerSerialEmptyTick(t *testing.T) {
 	sc := newTestScheduler(serialMeta(), world)
 
 	// Should not panic
-	sc.ProcessTick(world)
-	sc.ProcessTick(world)
+	sc.ProcessTick()
+	sc.ProcessTick()
 }
 
 // TestSchedulerSerialSelfSignal verifies that a logic can emit a signal
@@ -1929,14 +1929,14 @@ func TestSchedulerSerialTimerAndSignalMerged(t *testing.T) {
 
 	// Tick 1: signal activates, registers timer
 	sc.Emit(10, testSignal{value: 1})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if callNum != 1 {
 		t.Fatalf("tick 1: expected 1 call, got %d", callNum)
 	}
 
 	// Tick 2: timer + signal → merged into single Think
 	sc.Emit(10, testSignal{value: 2})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if callNum != 2 {
 		t.Fatalf("tick 2: expected exactly 1 more call (total 2), got %d", callNum)
 	}
@@ -1967,7 +1967,7 @@ func TestSchedulerSerialSignalBatching(t *testing.T) {
 	sc.Emit(5, testSignal{value: 1, order: 3})
 	sc.Emit(5, testSignal{value: 2, order: 1})
 	sc.Emit(5, testSignal{value: 3, order: 2})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// All 3 signals should be batched into a single Think call
 	if logic.thinkHits.Load() != 1 {
@@ -1998,7 +1998,7 @@ func TestSchedulerSerialSelfSignal(t *testing.T) {
 	world.addLogic(logic)
 
 	sc.Emit(7, testSignal{value: 0})
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 
 	// maxDepth=3: initial Think at depth 1, self-emit at depth 2, self-emit at depth 3 = maxDepth → deferred
 	// So Think should be called exactly 3 times in tick 1.
@@ -2008,7 +2008,7 @@ func TestSchedulerSerialSelfSignal(t *testing.T) {
 
 	// Tick 2: the deferred self-signal triggers another round.
 	thinksBefore := thinkCount
-	sc.ProcessTick(world)
+	sc.ProcessTick()
 	if thinkCount <= thinksBefore {
 		t.Fatalf("tick 2: expected more Thinks from deferred self-signal, got %d total", thinkCount)
 	}

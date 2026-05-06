@@ -1,6 +1,6 @@
 # Tasks
 
-Last Updated: 2026-04-25
+Last Updated: 2026-04-27
 
 ## Active
 
@@ -24,6 +24,7 @@ Last Updated: 2026-04-25
 
 ## Done
 
+- [x] Scheduler demo 接入文档：新增 `sched/integration.md`，沉淀 public/private data 访问模式、Effect/Signal/StagedState 接入边界与 SerialRef apply-only 语义 (2026-04-27)
 - [x] GAS / Attribute 边界重构：删除 `game/` 内完整 `gas/` framework 草稿，新增 `attr/` runtime 与 `attr/cmd/mk_attr`，demo 属性改为 `attr.Value`，`go test ./...` 通过 (2026-04-25)
 - [x] Scheduler StagedState 多域设计与实现：移除 `ST` 类型参数，改为 `StageKind` + `StagedState any` + `(ref, kind)` last-write-wins，新增多 kind 测试，`go test ./...` 通过 (2026-04-25)
 - [x] Scheduler StagedState 重设计首版实现：WatchState 移出 runtime，新增 `WriteStage` / `PromoteStages`，并发/串行路径阶段 promote，闭包 benchmark 与 `go test ./...` 通过 (2026-04-24)
