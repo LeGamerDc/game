@@ -6,7 +6,11 @@ type Root[C Ctx, E EI] struct {
 	n   *Node[C, E]
 }
 
+// SetNode sets the root node only when this Root has no active execution stack.
+// To replace a running tree, cancel or let the current stack complete before calling SetNode.
 func (r *Root[C, E]) SetNode(n *Node[C, E]) {
+	_assert(n != nil)
+	_assert(top(&r.stk) == nil)
 	r.n = n
 }
 

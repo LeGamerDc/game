@@ -1,15 +1,16 @@
 # Tasks
 
-Last Updated: 2026-04-27
+Last Updated: 2026-05-10
 
 ## Active
 
-- [ ] 性能 Demo 开发：验证 scheduler 并行性能，为博客投稿提供数据支撑
-- [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线
+- [ ] BT Game Developer 投稿准备：英文 Markdown 初稿与本地图像已完成，待审稿并决定是否补 benchmark/pprof 数据
 
 ## Backlog
 
-- [ ] Demo 层 GAS/combat path：在业务 demo 中实现 Ability/Effect/Buff/Tag/Attribute 的端到端链路
+- [ ] Demo combat 后续扩展：补充更复杂技能配置、投射物 Logic、公开 tag/CC、SerialRef 全局结算等非 MVP 能力
+- [ ] 性能 Demo 开发：验证 scheduler 并行性能，为博客投稿提供数据支撑
+- [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线
 - [ ] gamedeveloper.com 博客投稿：初稿已完成（`docs/papers/blog_parallel_tick.md`），待性能数据后投稿
 - [ ] GDC 投稿准备：先行工作分析与价值评估已完成，待 benchmark + demo
 - [ ] 设计空间查询 API：World 需提供版本化只读空间索引接口
@@ -24,6 +25,13 @@ Last Updated: 2026-04-27
 
 ## Done
 
+- [x] BT Game Developer 投稿初稿与本地图像：新增 `docs/papers/bt_stack_runtime_submission.md`，引用 `docs/papers/assets/bt_stack_runtime/` 下 1 张 imagegen 头图与 7 张本地 PNG 技术图，正文按架构拆解稿处理性能边界 (2026-05-10)
+- [x] BT Game Developer 投稿组织结构：新增 `docs/papers/bt_stack_runtime_article_outline.md`，确定 technical breakdown 结构、核心 claim、章节顺序、图示规划、伪代码控制策略和投稿前清单 (2026-05-10)
+- [x] BT 投稿前 bug/设计缺陷修复：修复 `joinBranch.OnEvent` next wake 汇总，补 `NewRepeatUntilNSuccess` 参数校验，明确 `Node.Check` 浅校验、`TaskStatus` 编码与 `Root.SetNode` 空栈约束，`go test ./...` 通过 (2026-05-10)
+- [x] BT Game Developer 投稿前审计：完成 `bt/` 实现 bug/设计漏洞、创新性、投稿适配度分析，产出 `bt/tmp_gamedeveloper_audit.md`；确认当前不宜直接投稿，需先修 P0 与补 benchmark (2026-05-10)
+- [x] BT 手动栈 runtime 投稿核心设计：调研 prior art 后确认手动 traversal stack 本身已有相邻提出，但 `bt/` 可主张 stack-complete BT runtime 架构；新增 `docs/design/bt_stack_runtime_article.md` 并更新 `docs/INDEX.md` (2026-05-10)
+- [x] Demo combat/ability MVP 实现：新增 `demo/combat` 与 `demo/scenario`，实现 Unit/World/Stage query、普通攻击、技能队列、被动触发、buff modifier、死亡复活和串行/并行集成测试，`go test ./...` 通过 (2026-05-09)
+- [x] Demo combat/ability 框架设计稿：新增 `docs/design/demo_combat_framework.md`，沉淀 Unit、普通攻击、技能槽、被动、buff、死亡复活与 sched 接入边界 (2026-05-09)
 - [x] Scheduler demo 接入文档：新增 `sched/integration.md`，沉淀 public/private data 访问模式、Effect/Signal/StagedState 接入边界与 SerialRef apply-only 语义 (2026-04-27)
 - [x] GAS / Attribute 边界重构：删除 `game/` 内完整 `gas/` framework 草稿，新增 `attr/` runtime 与 `attr/cmd/mk_attr`，demo 属性改为 `attr.Value`，`go test ./...` 通过 (2026-04-25)
 - [x] Scheduler StagedState 多域设计与实现：移除 `ST` 类型参数，改为 `StageKind` + `StagedState any` + `(ref, kind)` last-write-wins，新增多 kind 测试，`go test ./...` 通过 (2026-04-25)

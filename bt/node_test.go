@@ -813,6 +813,31 @@ func TestEventInterrupt(t *testing.T) {
 		eventResult := root.OnEvent(ctx, event)
 		assert.Equal(t, TaskNew, eventResult)
 	})
+
+	t.Run("Parallel_Event_Preserves_Unhandled_Running_Next", func(t *testing.T) {
+		ctx := newTestCtx()
+		ctx.time = 0
+
+		taskACreator := func(c *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+			return &testTask{name: "taskA", result: TaskStatus(10), eventResult: TaskStatus(5)}, true
+		}
+		taskBCreator := func(c *testCtx) (LeafTaskI[*testCtx, *testEvent], bool) {
+			return &testTask{name: "taskB", result: TaskStatus(1)}, true
+		}
+
+		parallel := NewParallel(successGuard, MatchSuccess, 1,
+			NewTask(successGuard, taskACreator),
+			NewTask(successGuard, taskBCreator),
+		)
+		root := &Root[*testCtx, *testEvent]{}
+		root.SetNode(parallel)
+
+		result := root.Execute(ctx)
+		assert.Equal(t, TaskStatus(1), result)
+
+		eventResult := root.OnEvent(ctx, &testEvent{kind: 1})
+		assert.Equal(t, TaskStatus(1), eventResult)
+	})
 }
 
 // 5. 编写一个复杂的 7-8 层的NPC战士行为树
@@ -963,6 +988,54 @@ func TestNodeValidation(t *testing.T) {
 
 	err = validSeq.Check()
 	assert.NoError(t, err)
+
+	// Check 只检查当前节点，不递归检查子节点
+	shallowParent := NewSuccess(successGuard, invalidSeq)
+	err = shallowParent.Check()
+	assert.NoError(t, err)
+
+	// Repeat 节点必须有有限且可满足的循环参数
+	child := NewTask(successGuard, newTestTaskCreator("task", TaskSuccess))
+	invalidRepeat := &Node[*testCtx, *testEvent]{
+		Type:      TypeRepeat,
+		Children:  []*Node[*testCtx, *testEvent]{child},
+		Require:   2,
+		MaxLoop:   1,
+		CountMode: MatchSuccess,
+	}
+	err = invalidRepeat.Check()
+	assert.Error(t, err)
+}
+
+func TestRepeatUntilNSuccessConstructorValidation(t *testing.T) {
+	child := NewTask(successGuard, newTestTaskCreator("task", TaskSuccess))
+
+	assert.Panics(t, func() {
+		NewRepeatUntilNSuccess(successGuard, 0, 1, child)
+	})
+	assert.Panics(t, func() {
+		NewRepeatUntilNSuccess(successGuard, 1, 0, child)
+	})
+	assert.Panics(t, func() {
+		NewRepeatUntilNSuccess(successGuard, 2, 1, child)
+	})
+	assert.NotPanics(t, func() {
+		NewRepeatUntilNSuccess(successGuard, 1, 1, child)
+	})
+}
+
+func TestRootSetNodeRequiresEmptyStack(t *testing.T) {
+	ctx := newTestCtx()
+
+	root := &Root[*testCtx, *testEvent]{}
+	root.SetNode(NewTask(successGuard, newWaitTaskCreator(5)))
+
+	result := root.Execute(ctx)
+	assert.Equal(t, TaskStatus(5), result)
+
+	assert.Panics(t, func() {
+		root.SetNode(NewTask(successGuard, newTestTaskCreator("replacement", TaskSuccess)))
+	})
 }
 
 // 测试计数模式

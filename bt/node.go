@@ -44,8 +44,11 @@ const (
 	MatchAll               = MatchSuccess | MatchFail
 )
 
-// >= 1  : Running
-// <= -2 : Fail
+// TaskStatus uses a compact encoding shared by node execution and event dispatch:
+//   - >0: running, with the value as a relative delay hint before the next update.
+//   - 0: internal "new child was pushed" marker, or "event was not handled".
+//   - -1: success.
+//   - <=-2: failure.
 const (
 	TaskRunning TaskStatus = 1
 	TaskNew     TaskStatus = 0
@@ -166,6 +169,9 @@ func NewInverter[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E] {
 // NewRepeatUntilNSuccess 持续运行子树，直到完成require次Success，若maxLoop后未完成则返回Fail
 func NewRepeatUntilNSuccess[C Ctx, E EI](g Guard[C], require, maxLoop int32, ch *Node[C, E]) *Node[C, E] {
 	_assert(ch != nil)
+	_assert(require > 0)
+	_assert(maxLoop > 0)
+	_assert(require <= maxLoop)
 	return &Node[C, E]{
 		Type:      TypeRepeat,
 		Children:  []*Node[C, E]{ch},
@@ -295,7 +301,8 @@ func NewParallel[C Ctx, E EI](g Guard[C], mode CountMode, require int32, ch ...*
 	}
 }
 
-// Check 用户自设参数时，调用Check检查参数是否合理
+// Check 用户自设参数时，调用Check检查当前节点参数是否合理。
+// 它只检查当前节点，不递归检查子树；整棵树需要逐节点检查或未来单独的 tree validate API。
 func (n *Node[C, E]) Check() error {
 	switch n.Type {
 	case TypeRevise:
@@ -305,7 +312,20 @@ func (n *Node[C, E]) Check() error {
 		if n.Revise == nil {
 			return fmt.Errorf(fmtBadParam, "revise")
 		}
-	case TypeRepeat, TypePostGuard, TypeAlwaysGuard:
+	case TypeRepeat:
+		if len(n.Children) != 1 {
+			return errWrongChildCount
+		}
+		if n.Require <= 0 {
+			return fmt.Errorf(fmtBadParam, "require")
+		}
+		if n.MaxLoop <= 0 {
+			return fmt.Errorf(fmtBadParam, "maxLoop")
+		}
+		if n.Require > n.MaxLoop {
+			return fmt.Errorf(fmtBadParam, "require")
+		}
+	case TypePostGuard, TypeAlwaysGuard:
 		if len(n.Children) != 1 {
 			return errWrongChildCount
 		}

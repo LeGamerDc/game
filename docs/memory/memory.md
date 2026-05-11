@@ -1,13 +1,25 @@
 # Memory
 
-Last Updated: 2026-04-27
+Last Updated: 2026-05-10
 
 ## Current Focus
 
-Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 解释 Scheduler 的最小接入协议，重点沉淀 public/private data 的 Think/Apply 访问模式、Effect/Signal/StagedState 边界，以及 SerialRef 的 apply-only 语义。下一步主线可回到性能 demo/benchmark，或按该文档在 demo 层实现具体 combat path。
+BT Game Developer 投稿初稿已完成：`docs/papers/bt_stack_runtime_submission.md` 是英文 Markdown 投稿稿，定位为 Game Developer technical breakdown，以 “stack-first / continuation stack runtime” 为核心主题，并引用 `docs/papers/assets/bt_stack_runtime/` 下的本地图片。下一步是人工审稿、决定是否补传统 root tick / memory composite benchmark 与 allocation/pprof 解释，或直接按“架构拆解而非性能宣称”投稿。
 
 ## Latest State
 
+- **BT Game Developer 投稿正文与图像已产出**：新增 `docs/papers/bt_stack_runtime_submission.md`，约 2385 英文词，使用 1 张 imagegen 头图与 7 张本地生成的 16:9 PNG 技术图；正文明确不宣称首次提出 traversal stack、不宣称完整替代全局 reactive BT、不在无对照 benchmark 前写性能倍数。
+- **BT 投稿前首批修复已完成**：修复 `joinBranch.OnEvent` 遗漏未消费事件子树 next wake 的问题；`NewRepeatUntilNSuccess` 构造函数与 `TypeRepeat.Check` 拒绝 `require <= 0`、`maxLoop <= 0`、`require > maxLoop`；`Root.SetNode` 断言只能在空栈时调用；补充覆盖测试。`GOCACHE=/private/tmp/game-go-build-cache go test ./...` 通过。
+- **BT Game Developer 投稿组织稿已新增**：`docs/papers/bt_stack_runtime_article_outline.md` 根据官方 Blogging Guidelines 与本地风格调研，确定文章不写成 README/论文，而写成 2200-3000 词 technical breakdown；主线为 active path continuation stack，正文用 6-8 张图解释 root tick 对比、短路径恢复、AlwaysGuard sub-root、parallel child roots、event dispatch、discrete wake 与 cancel unwind，最多保留两段极简代码。
+- **BT 投稿前审计已完成**：`bt/tmp_gamedeveloper_audit.md` 记录了实现机制、测试/benchmark 证据、明显 bug、创新性边界和 Game Developer 文章定位。两个已知 P0 已修复；当前仍需补传统 root tick 对照 benchmark、allocation/pprof 解释与文章图示后再投稿。
+- **BT 手动栈投稿核心设计已沉淀**：`docs/design/bt_stack_runtime_article.md` 记录新颖性边界与文章主 claim。调研确认 AltDevBlog 2011 已提出 data-oriented traversal stack，因此“手动栈 short path”不能单独作为无人提出的 claim；但可以把 `bt/` 定位为 stack-complete BT runtime：普通 composite 是栈帧，AlwaysGuard 是外层 frame + 内部 sub-root，parallel 是外层 frame + 多个子 root，event/discrete wake/cancel 都落在 active continuation 上。
+- **Demo combat 框架设计稿已新增**：`docs/design/demo_combat_framework.md` 以 `sched/integration.md` 为约束，提出 Unit=Owner、World staged query、0.125s tick/连续秒 deadline、普通攻击前摇/弹道延迟、技能 ready queue、被动触发、buff modifier、死亡 8s 复活和 package/file 布局。
+- **Demo combat MVP 已实现**：`demo/combat` 包含 time、Effect/Signal、World、Stage summary、空间查询、Unit、普通攻击、技能队列、被动触发、buff、死亡复活和生成属性；`demo/scenario` 包含 n x n grid、demo 技能配置、runner 和集成测试。
+- **实现期设计调整已记录**：`demo/update.md` 记录了串行 scheduler 递归 `Emit` / `Publish` 的业务接入规则：发出 self signal 或可能回流 source 的 effect 前，必须先推进 owner-local 状态，pending 队列必须先移除/推进再 publish。
+- **Demo 属性生成目标已迁移**：`demo/cfg/attr.toml` 新增 `AttackRange` / `AttackSpeed`，`demo/Makefile gen-attr` 输出到 `demo/combat/demo_attr.go`（package `combat`），旧根目录 `demo/demo_attr.go` 已删除。
+- **旧 demo 根 package 已移除**：早期草稿 `demo/gas.go` / `demo/world.go` 已删除，避免与 `demo/combat` 新实现并存两套语义。
+- **验证通过**：`make -C demo gen-attr` 与 `GOCACHE=/private/tmp/game-go-build-cache go test ./...` 均通过。
+- **Demo package 拆分已确认**：框架和场景都在 `demo/` 下，但使用子 package 分层；`demo/combat` 放战斗框架，`demo/scenario` 放具体 n x n 场景、测试技能配置、runner 和集成测试，依赖方向为 scenario -> combat。
 - **StagedState 已改为多域 API**：`sched` 使用 `StageKind int32` + `StagedState any`，`ctx.WriteStage(kind, state)`，`RefStage{RefId, Kind, State}`，`StagePromoter.PromoteStages(Inbox[RefStage])`。Scheduler 不再有 `ST` 类型参数。
 - **Scheduler 接入文档已新增**：`sched/integration.md` 作为 demo/agent 接入手册，明确 Logic=Owner、public/private data 分层、Think/Apply 访问矩阵、Effect/Signal 分工、StagedState 接入方式、World 接入清单与常见误用检查表。
 - **WriteStage owner 安全**：`WriteStage` 不提供 ref 参数；scheduler 在 Think/Apply 调用前通过闭包捕获当前 owner ref（parallel: `thinkRef` / `applyRef`；serial: 可恢复的 `stageRef`），防止 Logic 写其他 owner 的 staged state；`StageKind` 只区分同 owner 的 staged domain。
@@ -31,6 +43,13 @@ Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 
 - **旧 GAS 模式代码已归档**：`sched/engine_bak.go`（全部注释掉）。
 
 ## Confirmed Decisions
+
+### BT runtime
+
+- `TaskStatus > 0` 表示 running 且值为相对 delay hint，不是绝对时间点。
+- `TaskNew == 0` 复用为内部 push-new-child 标记与 event 未处理标记；调用方需要按上下文理解。
+- `Node.Check` 是当前节点浅校验，不递归检查整棵子树；整树校验若需要应作为单独 API 设计。
+- `Root.SetNode` 仅用于空栈 root 的初始化/替换；运行中替换必须先 cancel 或等待当前栈结束。
 
 ### 核心模型
 
@@ -61,6 +80,15 @@ Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 
 - **Effect 数据设计**：携带中间结果（如 rawDamage）+ 少量 source 参数（如 penetration、element），不携带 source 全部状态。Source 端在 Think 阶段计算并打包，Target 端在 Apply 阶段用自身状态完成最终计算。
 - **attr.toml 显式 field ID**：attr.toml 使用显式 field ID（`{ id = N, type = "scalar"|"attribute" }`；`instant` 暂兼容为 deprecated scalar），不再依赖 list 顺序；生成的 Go 代码使用显式常量值而非 iota。
 
+### Demo combat 结构决策
+
+- `demo/combat` 是战斗框架 package，包含 Unit、World、Effect、Signal、Ability、Buff、Stage summary、属性 helper 和生成的 `demo_attr.go`。
+- `demo/scenario` 是具体 demo 场景 package，包含 n x n 初始化包装、测试技能/buff 配置、runner 和端到端测试；依赖 `demo/combat`，`demo/combat` 不反向依赖 scenario。
+- 根 `demo/` 尽量只保留 `Makefile`、`cfg/attr.toml`、prompt/说明类材料；旧 `demo/gas.go` / `demo/world.go` 已由 `demo/combat` 新实现取代并删除。
+- MVP 采用设计稿默认语义：普通攻击 fire 后即可让技能队列接管；技能 CD 从 cast commit 开始；弹道命中只检查目标仍存在且可受击，不重新检查距离；`AttackRange` / `AttackSpeed` 是 attribute，`ProjectileSpeed` 暂为配置；每 Unit 使用基于 ref 的 deterministic RNG。
+- 串行模式下业务代码必须考虑 `Emit` / `Publish` inline 递归：在 self signal 或可能回流 source 的 effect 发出前，先提交本 owner 私有/公开状态；到期队列先移除或推进 deadline，再发布 effect，避免递归 Think 重复处理。
+- MVP 的 n x n 创建是 tick 外部 scenario 初始化，暂未把 spawn/despawn 建模为 `RefWorld` effect；运行时创建/销毁需要后续补 World/SerialRef apply-only dispatch。
+
 ### 已关闭的设计方向
 
 - **Effect/Signal 代数组合（框架级预合并）**：确认不做。Commutativity ≠ Mergeability。
@@ -70,6 +98,11 @@ Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 
 - **WorldView 接口隔离**：已移除。Think/Apply 统一使用 W World，隔离由约束系统保证（Logic 内无法调用 GetLogic 等非 World 方法）。
 
 ## Open Questions
+
+### BT 投稿与实现
+
+- BT 投稿是否要在提交前补对照 benchmark：传统 root tick、memory composite、reactive guard 频繁重评估、事件唤醒路径和 allocation/pprof 都尚未补齐；当前英文稿已避免性能倍数宣称，可作为架构拆解稿继续审阅。
+- BT 投稿下一步是审阅 `docs/papers/bt_stack_runtime_submission.md` 的语气、图示、标题和对 prior art 的边界表达，再决定是否补 benchmark 数据。
 
 ### Scheduler 层
 
@@ -92,9 +125,30 @@ Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 
 - CC 效果标准化：Kind/Priority/Tenacity 体系
 - 行为树（bt/）与 GAS 集成：NPC AI 如何调用 AbilitySet
 
+### Demo combat 后续增强
+
+- Projectile 是否需要升级为独立 Logic 模板：spawn/fly/collide/destroy 生命周期尚未实现。
+- `ProjectileSpeed` 是否需要成为 attribute 以支持 buff 修改；MVP 暂保持为普通攻击/技能配置。
+- 公开 tag / CC / cost / charge / stack policy 等更完整 GAS-like 能力尚未进入 MVP。
+- SerialRef apply-only dispatch 在 demo 层还未落地；MVP 暂不使用 SerialRef。
+- 运行时 spawn/despawn 还未走 `RefWorld` effect；当前 grid 初始化发生在 tick 前。
+
 ## Relevant Files
 
 - `AGENTS.md`
+- `bt/tmp_gamedeveloper_audit.md`
+- `docs/design/bt_stack_runtime_article.md`
+- `docs/papers/bt_stack_runtime_article_outline.md`
+- `docs/papers/bt_stack_runtime_submission.md`
+- `docs/papers/assets/bt_stack_runtime/`
+- `bt/node.go`
+- `bt/branch.go`
+- `bt/decorator.go`
+- `bt/stk.go`
+- `bt/node_test.go`
+- `bt/README.md`
+- `bt/blackboard/blackboard.go`
+- `docs/references/gamedeveloper_style_guide.md`
 - `sched/world.go`
 - `sched/scheduler.go`
 - `sched/scheduler_parallel.go`
@@ -106,6 +160,7 @@ Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 
 - `sched/utils.go`
 - `docs/design/parallel.md`
 - `docs/design/scheduler.md`
+- `docs/design/demo_combat_framework.md`
 - `docs/design/adaptation_guide.md`
 - `docs/design/ability_system.md`
 - `docs/references/gas_survey.md`
@@ -119,7 +174,22 @@ Scheduler demo 接入文档已完成：`sched/integration.md` 面向 demo/agent 
 - `attr/cmd/mk_attr/main_test.go`
 - `demo/cfg/attr.toml`
 - `demo/Makefile`
-- `demo/demo_attr.go`
+- `demo/update.md`
+- `demo/combat/demo_attr.go`
+- `demo/combat/world.go`
+- `demo/combat/unit.go`
+- `demo/combat/unit_attack.go`
+- `demo/combat/ability.go`
+- `demo/combat/ability_slot.go`
+- `demo/combat/passive.go`
+- `demo/combat/buff.go`
+- `demo/combat/unit_death.go`
+- `demo/combat/*_test.go`
+- `demo/scenario/grid.go`
+- `demo/scenario/skills.go`
+- `demo/scenario/runner.go`
+- `demo/scenario/*_test.go`
+- `demo/prompt.md`
 
 ## Should
 

@@ -8,3 +8,5 @@ MaxHp   = { id = 2, type = "attribute" }
 MaxMana = { id = 3, type = "attribute" }
 Attack  = { id = 4, type = "attribute" }
 Defense = { id = 5, type = "attribute" }
+AttackRange = { id = 6, type = "attribute" }
+AttackSpeed = { id = 7, type = "attribute" }

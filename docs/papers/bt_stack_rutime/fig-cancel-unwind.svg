@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f7f6f1"/>
+  <text x="70" y="86" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700" fill="#24313a">Cancellation as Stack Unwind</text>
+  <defs>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b9c4c8"/>
+    </marker>
+    <marker id="arrowTeal" markerWidth="14" markerHeight="14" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f8b8d"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#16333a" flood-opacity="0.11"/>
+    </filter>
+  </defs>
+    <rect x="130" y="180" width="1340" height="600" rx="26" fill="#ffffff" stroke="#b9c4c8" stroke-width="2"/>
+    <g filter="url(#shadow)">
+    <rect x="250" y="315" width="260" height="70" rx="14" fill="#f8dedb" stroke="#c4514a" stroke-width="3"/>
+    <text x="380" y="354" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600" fill="#24313a">Cancel request</text>
+  </g>
+    <line x1="515" y1="350" x2="670" y2="350" stroke="#c4514a" stroke-width="6" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <g filter="url(#shadow)">
+    <rect x="710" y="235" width="470" height="152" rx="16" fill="#ffffff" stroke="#e2a72e" stroke-width="3"/>
+    <rect x="710" y="235" width="470" height="56" rx="16" fill="#fff0c2"/>
+    <text x="734" y="272" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600" fill="#24313a">top</text>
+    <text x="740" y="329" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="500" fill="#6e7b83">WaitMove</text><text x="740" y="367" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="500" fill="#6e7b83">cleanup movement request</text>
+  </g>
+    <g filter="url(#shadow)">
+    <rect x="760" y="405" width="420" height="152" rx="16" fill="#ffffff" stroke="#0f8b8d" stroke-width="3"/>
+    <rect x="760" y="405" width="420" height="56" rx="16" fill="#d9f0ef"/>
+    <text x="784" y="442" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600" fill="#24313a">parent</text>
+    <text x="790" y="499" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="500" fill="#6e7b83">ChaseSequence</text><text x="790" y="537" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="500" fill="#6e7b83">release local state</text>
+  </g>
+    <g filter="url(#shadow)">
+    <rect x="810" y="575" width="370" height="152" rx="16" fill="#ffffff" stroke="#c4514a" stroke-width="3"/>
+    <rect x="810" y="575" width="370" height="56" rx="16" fill="#f8dedb"/>
+    <text x="834" y="612" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600" fill="#24313a">parent</text>
+    <text x="840" y="669" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="500" fill="#6e7b83">AlwaysGuard</text><text x="840" y="707" text-anchor="start" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="500" fill="#6e7b83">cancel inner root</text>
+  </g>
+    <line x1="945" y1="395" x2="970" y2="405" stroke="#b9c4c8" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 12" marker-end="url(#arrow)"/>
+    <line x1="970" y1="565" x2="995" y2="575" stroke="#b9c4c8" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 12" marker-end="url(#arrow)"/>
+    <text x="800" y="835" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600" fill="#24313a">Normal completion and interruption both have one visible cleanup path: pop frames from top to root.</text>
+</svg>

@@ -4,7 +4,7 @@
 >
 > 本文件不替代 `memory/memory.md`（当前工作上下文），而是补充"所有文档在哪、是什么"。
 
-Last Updated: 2026-04-25
+Last Updated: 2026-05-10
 
 ---
 
@@ -14,8 +14,10 @@ Last Updated: 2026-04-25
 |------|------|--------|
 | `parallel.md` | 并行 tick 概念模型：BSP superstep、Logic=Owner 所有权、Think/Apply 两阶段、Effect 顺序无关性 | BSP, superstep, ownership, Think/Apply |
 | `scheduler.md` | Scheduler 实现级设计：并发/串行双模式、block-based effect 收集、LPT 负载均衡、StagedState、计算分解约束 | block collector, LPT, StagedState, ScheduleMeta |
+| `demo_combat_framework.md` | demo 战斗与技能框架设计稿：Unit/普通攻击/技能槽/buff/death 如何按 Scheduler 协议拆分 | demo, combat, ability, Unit |
 | `ability_system.md` | GAS 设计参考稿：完整 GAS 不再作为 `game/` 基础 package 落地，Attribute/Modifier 抽到 `attr/`，其余业务组合留给 demo | buff, modifier, attribute, ability |
 | `adaptation_guide.md` | 107 条逻辑链路适配分类指导手册，6 大分类 + 5 步判定流程 | adaptation, 6 categories, migration |
+| `bt_stack_runtime_article.md` | BT 手动栈 runtime 投稿核心设计与新颖性边界：将 active path 作为 continuation stack，并说明 guard/parallel/event/discrete wakeup 的完备性 | BT, stack runtime, article |
 
 ## references/ — 调研与理论
 
@@ -36,6 +38,8 @@ Last Updated: 2026-04-25
 | 文件 | 摘要 | 关键词 |
 |------|------|--------|
 | `blog_parallel_tick.md` | 博客初稿（面向 gamedeveloper.com）：No Locks, No Transactions — 用结构化所有权并行化 MMO 服务器 tick | blog, publication |
+| `bt_stack_runtime_article_outline.md` | BT Game Developer 投稿组织稿：以 stack-first runtime 为主线，规划章节、图示、伪代码控制和投稿前清单 | BT, Game Developer, outline |
+| `bt_stack_runtime_submission.md` | BT Game Developer 英文投稿稿：以 stack-first behavior-tree runtime 为主线，含本地图像引用与取舍说明 | BT, Game Developer, submission |
 | `novelty_and_value_analysis.md` | GDC 发表价值综合分析：先行工作对比 + 新颖性评估 + 发表竞争力判断 | GDC, novelty, value |
 
 ## tmp/ — 过程产物 `[archived]`
@@ -84,10 +88,13 @@ Last Updated: 2026-04-25
   │             design/scheduler.md             │  ← 实现设计
   └─────────────────────────────────────────────┘
 
-                          GAS Chain
-                          =========
+                          GAS / Demo Combat Chain
+                          =======================
 
   research_*.md (tmp/) ──→ gas_survey.md ──→ ability_system.md
+                                                   │
+                                                   ▼
+                                      demo_combat_framework.md
 
                        Adaptation Chain
                        ================
@@ -105,6 +112,8 @@ Last Updated: 2026-04-25
   gamedeveloper_style_guide.md ──┘              │
                                                 ▼
                                     blog_parallel_tick.md
+
+  bt_stack_runtime_article.md ────→ bt_stack_runtime_article_outline.md
 ```
 
 ---
