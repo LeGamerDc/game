@@ -1,22 +1,27 @@
 # Todo — 当前任务执行清单
 
-Last Updated: 2026-05-10
+Last Updated: 2026-05-13
 
-## 当前任务：BT Game Developer 投稿准备
+## 当前任务：无
 
-- [x] 读取 memory、Game Developer 风格调研、BT 设计稿、审计稿和关键实现
-- [x] 确认文章主 claim：stack-first / continuation stack runtime，而非行为树语义创新
-- [x] 设计符合 Game Developer technical breakdown 的文章组织结构
-- [x] 规划图示优先级，减少正文伪代码
-- [x] 使用 imagegen 生成投稿头图并拷入 `docs/papers/assets/bt_stack_runtime/header-server-ai.png`
-- [x] 生成本地 16:9 PNG 技术图：root tick 对照、active stack、resume/unwind、AlwaysGuard、parallel roots、event wake、cancel unwind
-- [x] 按组织稿撰写英文 Markdown 投稿正文 `docs/papers/bt_stack_runtime_submission.md`
-- [ ] 补传统 root tick / memory composite 对照 benchmark
-- [ ] 补 event wakeup / deep running leaf / allocation 数据
-- [ ] 人工审阅投稿标题、语气、图示密度和 prior art 边界表达
+## 最近完成：Sched + demo 性能验证
+
+- [x] 读取 `memory.md`、`tasks.md`、`todo.md`
+- [x] 复查 `demo/scenario` runner、grid、skills 与集成测试
+- [x] 复查 `demo/combat` Unit、Ability、Buff、World staged query 与 sched 接入路径
+- [x] 跑通当前验证：`go test ./...`、`go test -race ./demo/...`
+- [x] 确认当前 `demo/scenario` 尚无 benchmark
+- [x] 确认 benchmark 技能配置与测试矩阵
+- [x] 编写 benchmark 专用技能配置
+- [x] 编写串行/并发 Go benchmark
+- [x] 运行初步 benchmark，记录不同 grid 规模的结果
+- [x] 根据结果决定是否需要 profiler 或调整负载
 
 ## Notes
 
-- 正文应围绕现代 BT 特性适配案例展开：composite/decorator frame、AlwaysGuard sub-root、parallel child roots、event dispatch、discrete wakeup、cancel unwind。
-- 当前文章结构沉淀在 `docs/papers/bt_stack_runtime_article_outline.md`，英文正文在 `docs/papers/bt_stack_runtime_submission.md`。
-- 当前正文明确避免性能倍数宣称；如果后续决定把它变成性能导向文章，需要补对照 benchmark 与 allocation/pprof 解释。
+- 首轮已新增 `AddBenchmarkAbilities`：低 CD 单体、群体伤害、短周期 burn buff、被动追击，能够稳定产生 Think/Apply/Signal 回流负载。
+- `BenchmarkGridCombatScheduler` 覆盖 16x16 / 32x32 / 84x84 grid，并显式强制 serial、parallel-4、parallel-8；84x84 表示约 7000 单位档位。
+- 三轮短 benchmark 显示并发收益稳定：32x32 下 serial 约 12.9-13.1 ms/tick，parallel-4 约 3.25 ms/tick，parallel-8 约 2.83-2.85 ms/tick。
+- 84x84（7056 units）三轮短 benchmark：serial 约 123-125 ms/tick，parallel-4 约 26.7-26.8 ms/tick，parallel-8 约 23.6-24.2 ms/tick。
+- literal 7000x7000 会初始化 4900 万 units，当前机器上不应直接运行。
+- 后续如继续做性能文章数据，应转入 `Demo benchmark 后续分析`，补 benchstat/pprof 与 allocation 热点分析。

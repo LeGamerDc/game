@@ -1,16 +1,16 @@
 # Tasks
 
-Last Updated: 2026-05-10
+Last Updated: 2026-05-13
 
 ## Active
 
-- [ ] BT Game Developer 投稿准备：英文 Markdown 初稿与本地图像已完成，待审稿并决定是否补 benchmark/pprof 数据
+（无）
 
 ## Backlog
 
+- [ ] Demo benchmark 后续分析：整理 benchstat/pprof 数据，定位 allocation 热点，并评估 worker pool 对并发路径的影响
+- [ ] BT Game Developer 投稿准备：英文 Markdown 初稿与本地图像已完成，待审稿并决定是否补 benchmark/pprof 数据
 - [ ] Demo combat 后续扩展：补充更复杂技能配置、投射物 Logic、公开 tag/CC、SerialRef 全局结算等非 MVP 能力
-- [ ] 性能 Demo 开发：验证 scheduler 并行性能，为博客投稿提供数据支撑
-- [ ] 性能 Benchmark：串行 vs 并行 vs 自适应，不同 entity 数量扩展性曲线
 - [ ] gamedeveloper.com 博客投稿：初稿已完成（`docs/papers/blog_parallel_tick.md`），待性能数据后投稿
 - [ ] GDC 投稿准备：先行工作分析与价值评估已完成，待 benchmark + demo
 - [ ] 设计空间查询 API：World 需提供版本化只读空间索引接口
@@ -25,6 +25,7 @@ Last Updated: 2026-05-10
 
 ## Done
 
+- [x] Sched + demo 性能验证：新增 benchmark 技能组合与 `BenchmarkGridCombatScheduler`，完成 16x16/32x32/84x84 串行、parallel-4、parallel-8 初步对比；`go test ./...`、`go test -race ./demo/...`、三轮短 benchmark 通过 (2026-05-13)
 - [x] BT Game Developer 投稿初稿与本地图像：新增 `docs/papers/bt_stack_runtime_submission.md`，引用 `docs/papers/assets/bt_stack_runtime/` 下 1 张 imagegen 头图与 7 张本地 PNG 技术图，正文按架构拆解稿处理性能边界 (2026-05-10)
 - [x] BT Game Developer 投稿组织结构：新增 `docs/papers/bt_stack_runtime_article_outline.md`，确定 technical breakdown 结构、核心 claim、章节顺序、图示规划、伪代码控制策略和投稿前清单 (2026-05-10)
 - [x] BT 投稿前 bug/设计缺陷修复：修复 `joinBranch.OnEvent` next wake 汇总，补 `NewRepeatUntilNSuccess` 参数校验，明确 `Node.Check` 浅校验、`TaskStatus` 编码与 `Root.SetNode` 空栈约束，`go test ./...` 通过 (2026-05-10)

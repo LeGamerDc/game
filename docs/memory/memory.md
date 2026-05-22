@@ -1,13 +1,16 @@
 # Memory
 
-Last Updated: 2026-05-10
+Last Updated: 2026-05-13
 
 ## Current Focus
 
-BT Game Developer 投稿初稿已完成：`docs/papers/bt_stack_runtime_submission.md` 是英文 Markdown 投稿稿，定位为 Game Developer technical breakdown，以 “stack-first / continuation stack runtime” 为核心主题，并引用 `docs/papers/assets/bt_stack_runtime/` 下的本地图片。下一步是人工审稿、决定是否补传统 root tick / memory composite benchmark 与 allocation/pprof 解释，或直接按“架构拆解而非性能宣称”投稿。
+Sched + demo 性能验证首轮已完成：`demo/scenario` 已新增 benchmark 专用技能组合与 `BenchmarkGridCombatScheduler`，并用相同 combat 负载初步对比串行、parallel-4、parallel-8 的 tick 效率。下一步若继续推进，应整理更正式的 benchstat/pprof 数据，并评估 allocation 热点与 worker pool 优化。
 
 ## Latest State
 
+- **Sched + demo 性能验证首轮完成**：`demo/scenario/skills.go` 新增 `AddBenchmarkAbilities`，包含低 CD 单体、群体伤害、短周期 burn buff 与 `SignalDamageDealt` 被动追击；`demo/scenario/benchmark_test.go` 新增 `BenchmarkGridCombatScheduler`，固定 16x16 / 32x32 / 84x84 grid，对比强制串行、parallel-4、parallel-8；84x84 用作约 7000 单位档位（7056 units）。
+- **Demo 当前验证结果**：`GOCACHE=/private/tmp/game-go-build-cache go test ./...` 通过；`GOCACHE=/private/tmp/game-go-build-cache go test -race ./demo/...` 通过；`GOCACHE=/private/tmp/game-go-build-cache go test -bench=BenchmarkGridCombatScheduler -benchmem -run=^$ -benchtime=500ms -count=3 ./demo/scenario` 通过。
+- **初步 benchmark 趋势**：Apple M5 上 16x16 串行约 2.81-2.83 ms/tick，parallel-4 约 0.85-0.88 ms/tick，parallel-8 约 0.84 ms/tick；32x32 串行约 12.9-13.1 ms/tick，parallel-4 约 3.25-3.26 ms/tick，parallel-8 约 2.83-2.85 ms/tick；84x84 串行约 123-125 ms/tick，parallel-4 约 26.7-26.8 ms/tick，parallel-8 约 23.6-24.2 ms/tick。并发路径已有清晰收益，但 alloc/op 仍高，后续适合用 pprof/benchstat 深挖。literal 7000x7000 会创建 4900 万 units，当前不应直接跑。
 - **BT Game Developer 投稿正文与图像已产出**：新增 `docs/papers/bt_stack_runtime_submission.md`，约 2385 英文词，使用 1 张 imagegen 头图与 7 张本地生成的 16:9 PNG 技术图；正文明确不宣称首次提出 traversal stack、不宣称完整替代全局 reactive BT、不在无对照 benchmark 前写性能倍数。
 - **BT 投稿前首批修复已完成**：修复 `joinBranch.OnEvent` 遗漏未消费事件子树 next wake 的问题；`NewRepeatUntilNSuccess` 构造函数与 `TypeRepeat.Check` 拒绝 `require <= 0`、`maxLoop <= 0`、`require > maxLoop`；`Root.SetNode` 断言只能在空栈时调用；补充覆盖测试。`GOCACHE=/private/tmp/game-go-build-cache go test ./...` 通过。
 - **BT Game Developer 投稿组织稿已新增**：`docs/papers/bt_stack_runtime_article_outline.md` 根据官方 Blogging Guidelines 与本地风格调研，确定文章不写成 README/论文，而写成 2200-3000 词 technical breakdown；主线为 active path continuation stack，正文用 6-8 张图解释 root tick 对比、短路径恢复、AlwaysGuard sub-root、parallel child roots、event dispatch、discrete wake 与 cancel unwind，最多保留两段极简代码。
@@ -187,6 +190,7 @@ BT Game Developer 投稿初稿已完成：`docs/papers/bt_stack_runtime_submissi
 - `demo/combat/*_test.go`
 - `demo/scenario/grid.go`
 - `demo/scenario/skills.go`
+- `demo/scenario/benchmark_test.go`
 - `demo/scenario/runner.go`
 - `demo/scenario/*_test.go`
 - `demo/prompt.md`
