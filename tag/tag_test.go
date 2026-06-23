@@ -1,171 +1,156 @@
 package tag
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDBCompileHierarchy(t *testing.T) {
-	db := NewDB()
+// ── closure / exact semantics ───────────────────────────────────────────────
 
-	a := db.Compile("a")
-	ab := db.Compile("a.b")
-	abc := db.Compile("a.b.c")
-
-	assert.NotEqual(t, int16(-1), a)
-	assert.NotEqual(t, int16(-1), ab)
-	assert.NotEqual(t, int16(-1), abc)
-
-	assert.Equal(t, "a", db.String(a))
-	assert.Equal(t, "a.b", db.String(ab))
-	assert.Equal(t, "a.b.c", db.String(abc))
-
-	assert.Equal(t, int16(-1), db.Parent(a))
-	assert.Equal(t, a, db.Parent(ab))
-	assert.Equal(t, ab, db.Parent(abc))
-}
-
-func TestTagAddHasAncestorClosure(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
-	ab := db.Compile("a.b")
-	abc := db.Compile("a.b.c")
-
+func TestTag_HasTagAncestorClosure(t *testing.T) {
+	db, a, ab, abc, _, _, _, _ := setupDB(t)
 	var tg Tag
 	tg.AddTag(db, abc)
 
-	// 具有 a.b.c 即视为具有 a.b 与 a
+	// Holding a.b.c implies a.b and a hierarchically.
 	assert.True(t, tg.HasTag(abc))
 	assert.True(t, tg.HasTag(ab))
 	assert.True(t, tg.HasTag(a))
 }
 
-func TestTagRemoveCount(t *testing.T) {
-	db := NewDB()
-	ab := db.Compile("a.b")
-
+func TestTag_HasTagDoesNotImplyChildren(t *testing.T) {
+	db, a, ab, _, _, _, _, _ := setupDB(t)
 	var tg Tag
-	tg.AddTag(db, ab)
-	tg.AddTag(db, ab) // 计数 2
+	tg.AddTag(db, a)
 
-	// 第一次移除仍保留
-	tg.RemoveTag(db, ab)
-	assert.True(t, tg.HasTag(ab))
-
-	// 第二次移除计数归零，缓存剔除
-	tg.RemoveTag(db, ab)
+	// Holding the parent does not grant the child.
+	assert.True(t, tg.HasTag(a))
 	assert.False(t, tg.HasTag(ab))
 }
 
-func TestMatchAllNoneSome(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
-	ab := db.Compile("a.b")
-	abc := db.Compile("a.b.c")
-	x := db.Compile("x")
-
+func TestTag_HasTagExact(t *testing.T) {
+	db, a, ab, abc, _, _, _, _ := setupDB(t)
 	var tg Tag
 	tg.AddTag(db, abc)
 
-	// all 命中 + none 不命中 + some 命中
-	q1, _ := NewQuery(db, []int16{ab}, []int16{x}, []int16{a})
-	assert.True(t, tg.Match(q1))
-
-	// all 中有未命中的 => false
-	q2, _ := NewQuery(db, []int16{x}, nil, nil)
-	assert.False(t, tg.Match(q2))
-
-	// none 中有命中的 => false
-	q3, _ := NewQuery(db, nil, []int16{a}, nil)
-	assert.False(t, tg.Match(q3))
-
-	// some 非空，全都未命中 => false
-	q4, _ := NewQuery(db, nil, nil, []int16{x})
-	assert.False(t, tg.Match(q4))
-
-	// some 为空，且未触发前两条失败 => true
-	q5, _ := NewQuery(db, []int16{a}, nil, nil)
-	assert.True(t, tg.Match(q5))
+	assert.True(t, tg.HasTagExact(abc))
+	assert.False(t, tg.HasTagExact(ab), "ancestor not exact")
+	assert.False(t, tg.HasTagExact(a))
 }
 
-func TestTagIsAncestor(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
-	ab := db.Compile("a.b")
-	abc := db.Compile("a.b.c")
+// ── reference counting ──────────────────────────────────────────────────────
 
-	assert.True(t, db.IsAncestor(a, ab))
-	assert.True(t, db.IsAncestor(a, abc))
-	assert.True(t, db.IsAncestor(ab, abc))
-	assert.False(t, db.IsAncestor(abc, ab))
-	assert.False(t, db.IsAncestor(abc, a))
-	assert.False(t, db.IsAncestor(ab, a))
+func TestTag_RefcountedGrants(t *testing.T) {
+	db, _, ab, _, _, _, _, _ := setupDB(t)
+	var tg Tag
+	tg.AddTag(db, ab)
+	tg.AddTag(db, ab) // granted twice
+
+	tg.RemoveTag(db, ab) // one grantor left
+	assert.True(t, tg.HasTag(ab))
+	assert.True(t, tg.HasTagExact(ab))
+
+	tg.RemoveTag(db, ab) // last grantor gone
+	assert.False(t, tg.HasTag(ab))
+	assert.False(t, tg.HasTagExact(ab))
 }
 
-func TestNewQueryNormalizesHierarchy(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
-	ab := db.Compile("a.b")
-	abc := db.Compile("a.b.c")
-	x := db.Compile("x")
-	xy := db.Compile("x.y")
-	z := db.Compile("z")
-	zy := db.Compile("z.y")
-
-	q, ok := NewQuery(
-		db,
-		[]int16{a, ab, abc, ab},
-		[]int16{zy, z, zy},
-		[]int16{xy, x, xy},
-	)
-
-	assert.True(t, ok)
-	assert.Equal(t, queryHasAll|queryHasNone|queryHasSome, q.kind)
-	assert.Equal(t, []int16{abc, z, x}, q.tags)
-	assert.Equal(t, uint16(1), q.allEnd)
-	assert.Equal(t, uint16(2), q.noneEnd)
+func TestTag_RemoveAbsentIsNoop(t *testing.T) {
+	db, a, _, _, _, _, _, _ := setupDB(t)
+	var tg Tag
+	tg.RemoveTag(db, a) // must not panic or go negative
+	assert.False(t, tg.HasTag(a))
+	tg.AddTag(db, a)
+	tg.RemoveTag(db, a)
+	tg.RemoveTag(db, a) // extra remove
+	assert.False(t, tg.HasTag(a))
 }
 
-func TestNewQueryRejectsImpossibleQueries(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
-	abc := db.Compile("a.b.c")
-
-	_, ok1 := NewQuery(db, []int16{abc}, []int16{a}, nil)
-	assert.False(t, ok1)
-
-	_, ok2 := NewQuery(db, nil, []int16{a}, []int16{abc})
-	assert.False(t, ok2)
-
-	_, ok3 := NewQuery(nil, nil, nil, nil)
-	assert.False(t, ok3)
+func TestTag_AddInvalidKeyIgnored(t *testing.T) {
+	db, _, _, _, _, _, _, _ := setupDB(t)
+	var tg Tag
+	tg.AddTag(db, InvalidKey)
+	tg.AddTag(db, Key(9999))
+	assert.False(t, tg.HasTag(InvalidKey))
+	assert.False(t, tg.HasTagExact(InvalidKey))
+	assert.Equal(t, 0, tg.explicit.Len())
 }
 
-func TestNewQueryDropsSomeSatisfiedByAll(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
-	abc := db.Compile("a.b.c")
-	x := db.Compile("x")
+// ── incremental closure maintenance ─────────────────────────────────────────
 
-	q, ok := NewQuery(db, []int16{abc}, nil, []int16{a, x})
+func TestTag_SharedAncestorsSurviveSiblingRemoval(t *testing.T) {
+	db, a, ab, abc, abd, _, _, _ := setupDB(t)
+	var tg Tag
+	tg.AddTag(db, abc)
+	tg.AddTag(db, abd)
 
-	assert.True(t, ok)
-	assert.Equal(t, queryHasAll, q.kind)
-	assert.Equal(t, []int16{abc}, q.tags)
-	assert.Equal(t, uint16(1), q.allEnd)
-	assert.Equal(t, uint16(1), q.noneEnd)
+	tg.RemoveTag(db, abc)
+	assert.False(t, tg.HasTag(abc))
+	assert.True(t, tg.HasTag(abd))
+	assert.True(t, tg.HasTag(ab), "shared ancestor kept by abd")
+	assert.True(t, tg.HasTag(a))
+
+	tg.RemoveTag(db, abd)
+	assert.False(t, tg.HasTag(abd))
+	assert.False(t, tg.HasTag(ab))
+	assert.False(t, tg.HasTag(a))
+	assert.Equal(t, 0, tg.closure.Len(), "closure fully drained")
+	assert.Equal(t, 0, tg.explicit.Len())
 }
 
-func TestNewQueryHandlesInvalidTags(t *testing.T) {
-	db := NewDB()
-	a := db.Compile("a")
+// TestTag_IncrementalMatchesBruteForce fuzzes add/remove and checks the
+// incrementally-maintained closure/exact sets against a from-scratch recompute.
+func TestTag_IncrementalMatchesBruteForce(t *testing.T) {
+	db, keys := bigDB(t)
+	rng := rand.New(rand.NewSource(1))
 
-	_, ok1 := NewQuery(db, []int16{-1}, nil, nil)
-	assert.False(t, ok1)
+	var tg Tag
+	ref := make(map[Key]int) // explicit tag -> grant count
 
-	q2, ok2 := NewQuery(db, nil, []int16{-1}, []int16{a, -1})
-	assert.True(t, ok2)
-	assert.Equal(t, queryHasSome, q2.kind)
-	assert.Equal(t, []int16{a}, q2.tags)
+	for step := 0; step < 1500; step++ {
+		k := keys[rng.Intn(len(keys))]
+		if rng.Intn(2) == 0 {
+			tg.AddTag(db, k)
+			ref[k]++
+		} else {
+			tg.RemoveTag(db, k)
+			if ref[k] > 0 {
+				ref[k]--
+				if ref[k] == 0 {
+					delete(ref, k)
+				}
+			}
+		}
+
+		// Recompute the expected closure COUNTS from ref (distinct explicit
+		// descendants-or-self per node) — verifying counts, not just presence.
+		wantClosure := make(map[Key]int)
+		for e := range ref {
+			for anc := e; anc != InvalidKey; anc = db.Parent(anc) {
+				wantClosure[anc]++
+			}
+		}
+
+		for _, q := range keys {
+			ci, cv := tg.closure.Get(q)
+			if want := wantClosure[q]; want == 0 {
+				if ci >= 0 || tg.HasTag(q) {
+					t.Fatalf("step %d: closure(%s) present, want absent", step, db.String(q))
+				}
+			} else if ci < 0 || int(cv) != want || !tg.HasTag(q) {
+				t.Fatalf("step %d: closure(%s)=%d want %d", step, db.String(q), cv, want)
+			}
+
+			ei, ev := tg.explicit.Get(q)
+			if want := ref[q]; want == 0 {
+				if ei >= 0 || tg.HasTagExact(q) {
+					t.Fatalf("step %d: explicit(%s) present, want absent", step, db.String(q))
+				}
+			} else if ei < 0 || int(ev) != want || !tg.HasTagExact(q) {
+				t.Fatalf("step %d: explicit(%s)=%d want %d", step, db.String(q), ev, want)
+			}
+		}
+	}
 }

@@ -1,159 +1,227 @@
 package tag
 
 import (
+	"errors"
 	"slices"
 )
 
-type queryKind uint8
+// exprOp is the operator of an Expr node.
+type exprOp uint8
 
 const (
-	queryHasAll queryKind = 1 << iota
-	queryHasNone
-	queryHasSome
+	// Constants. opFalse is the zero value on purpose: an uninitialized Expr
+	// (hence a zero-value Query) matches nothing, which fails safe.
+	opFalse exprOp = iota
+	opTrue
+
+	// Leaf operators (operate on a set of tags).
+	opAllTags      // entity has all of the tags (hierarchical)
+	opAnyTags      // entity has at least one of the tags (hierarchical)
+	opNoTags       // entity has none of the tags (hierarchical)
+	opAllTagsExact // ... matched exactly (ignoring the hierarchy)
+	opAnyTagsExact
+	opNoTagsExact
+
+	// Compound operators (operate on a set of sub-expressions).
+	opAnd // all sub-expressions match
+	opOr  // any sub-expression matches
+	opNor // no sub-expression matches
 )
 
+// Expr is a node of a tag query expression tree. Leaf nodes carry a tag set;
+// compound nodes carry child expressions. Build one with the constructor
+// helpers (AllTags, NoTags, And, Or, ...) and compile it with NewQueryExpr.
+type Expr struct {
+	op    exprOp
+	tags  []Key
+	exprs []Expr
+}
+
+// Leaf constructors (hierarchical).
+func AllTags(tags ...Key) Expr { return Expr{op: opAllTags, tags: tags} }
+func AnyTags(tags ...Key) Expr { return Expr{op: opAnyTags, tags: tags} }
+func NoTags(tags ...Key) Expr  { return Expr{op: opNoTags, tags: tags} }
+
+// Leaf constructors (exact).
+func AllTagsExact(tags ...Key) Expr { return Expr{op: opAllTagsExact, tags: tags} }
+func AnyTagsExact(tags ...Key) Expr { return Expr{op: opAnyTagsExact, tags: tags} }
+func NoTagsExact(tags ...Key) Expr  { return Expr{op: opNoTagsExact, tags: tags} }
+
+// Compound constructors.
+func And(exprs ...Expr) Expr { return Expr{op: opAnd, exprs: exprs} }
+func Or(exprs ...Expr) Expr  { return Expr{op: opOr, exprs: exprs} }
+func Nor(exprs ...Expr) Expr { return Expr{op: opNor, exprs: exprs} }
+
+// Query is a compiled, normalized tag query, ready to be matched repeatedly.
+// Build one with NewQuery or NewQueryExpr; the zero value matches nothing.
 type Query struct {
-	tags            []int16
-	allEnd, noneEnd uint16
-	kind            queryKind
+	root Expr
 }
 
-// NewQuery constructs a Query with compile-time normalization:
+var errNilDB = errors.New("tag: nil DB")
+
+// NewQueryExpr compiles an arbitrary expression tree into a Query.
 //
-//  1. Invalid tags: all contains invalid → impossible; none/some drop invalid.
-//  2. Dedup each section.
-//  3. Hierarchy normalization:
-//     - all:  keep most specific (remove ancestors — they are implied).
-//     - none: keep broadest (remove descendants — ancestor ban is stronger).
-//     - some: keep broadest (remove descendants — ancestor is easier to satisfy).
-//  4. Cross-section optimization:
-//     - all ∩ none conflict: having an all-tag implies its ancestors; if any
-//     none-tag is such an ancestor → impossible.
-//     - some satisfied by all: if any some-tag is an ancestor of an all-tag,
-//     the some clause is trivially true → drop entire some.
-//     - none blocks some: remove some-tags whose presence would violate none;
-//     if all some-tags are blocked → impossible.
-func NewQuery(d *DB, all, none, some []int16) (Query, bool) {
-	var q Query
+// Normalization performs only cheap, always-valid rewrites:
+//   - per-leaf dedup and hierarchy collapse (most-specific for All, broadest
+//     for Any/None) — skipped for Exact leaves, where ancestors/descendants are
+//     independent;
+//   - constant folding of empty leaves and of And/Or/Nor over constant children.
+//
+// It deliberately does NOT try to prove a query unsatisfiable across siblings.
+// An impossible query is not an error: it simply never matches (its root folds
+// to — or evaluates as — false). The only error is a structural one (nil DB).
+func NewQueryExpr(d *DB, root Expr) (Query, error) {
 	if d == nil {
-		return q, false
+		return Query{}, errNilDB
 	}
-
-	// ── Phase 1: validate ──────────────────────────────────────────────
-	// all: any invalid tag makes the query unsatisfiable.
-	for _, t := range all {
-		if !d.validTag(t) {
-			return q, false
-		}
-	}
-
-	// Work on copies so we never mutate the caller's slices.
-	allW := dedupTags(slices.Clone(all))
-	noneW := dedupTags(filterValidTags(d, slices.Clone(none)))
-	someW := dedupTags(filterValidTags(d, slices.Clone(some)))
-
-	// ── Phase 2: hierarchy normalization ────────────────────────────────
-	allW = keepMostSpecific(d, allW)
-	noneW = keepBroadest(d, noneW)
-	someW = keepBroadest(d, someW)
-
-	// ── Phase 3: cross-section checks ──────────────────────────────────
-
-	// all ∩ none conflict: if a none-tag is an ancestor-or-equal of any
-	// all-tag, having that all-tag would put the none-tag into the cache
-	// via ancestor closure → contradiction.
-	for _, a := range allW {
-		for _, n := range noneW {
-			if d.IsAncestor(n, a) {
-				return q, false
-			}
-		}
-	}
-
-	// some satisfied by all: some requires "at least one present".  If any
-	// some-tag is an ancestor-or-equal of an all-tag, having that all-tag
-	// guarantees the some-tag via ancestor closure → entire some is trivially
-	// satisfied.
-	if len(someW) > 0 {
-		for _, s := range someW {
-			for _, a := range allW {
-				if d.IsAncestor(s, a) {
-					someW = someW[:0]
-					goto buildQuery
-				}
-			}
-		}
-	}
-
-	// none blocks some: a some-tag whose ancestor (or itself) appears in none
-	// can never be present without violating none.  Remove such entries; if
-	// nothing survives the some clause is unsatisfiable.
-	if len(someW) > 0 && len(noneW) > 0 {
-		j := 0
-		for _, s := range someW {
-			blocked := false
-			for _, n := range noneW {
-				if d.IsAncestor(n, s) {
-					blocked = true
-					break
-				}
-			}
-			if !blocked {
-				someW[j] = s
-				j++
-			}
-		}
-		someW = someW[:j]
-		if j == 0 {
-			return q, false
-		}
-	}
-
-buildQuery:
-	// ── Phase 4: pack into compact layout ──────────────────────────────
-	q.tags = make([]int16, 0, len(allW)+len(noneW)+len(someW))
-	q.tags = append(q.tags, allW...)
-	q.allEnd = uint16(len(q.tags))
-	q.tags = append(q.tags, noneW...)
-	q.noneEnd = uint16(len(q.tags))
-	q.tags = append(q.tags, someW...)
-
-	if len(allW) > 0 {
-		q.kind |= queryHasAll
-	}
-	if len(noneW) > 0 {
-		q.kind |= queryHasNone
-	}
-	if len(someW) > 0 {
-		q.kind |= queryHasSome
-	}
-	return q, true
+	return Query{root: normalizeExpr(d, root)}, nil
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────
-
-// filterValidTags removes tags that are not registered in the DB (in-place).
-func filterValidTags(d *DB, tags []int16) []int16 {
-	j := 0
-	for _, t := range tags {
-		if d.validTag(t) {
-			tags[j] = t
-			j++
-		}
+// NewQuery is a convenience wrapper for the common "required / forbidden /
+// any-of" shape, equivalent to And(AllTags(all), NoTags(none), AnyTags(some))
+// with empty clauses omitted. An empty all/none/some clause does not
+// participate; an all-empty query matches everything.
+func NewQuery(d *DB, all, none, some []Key) (Query, error) {
+	var children []Expr
+	if len(all) > 0 {
+		children = append(children, AllTags(all...))
 	}
-	return tags[:j]
+	if len(none) > 0 {
+		children = append(children, NoTags(none...))
+	}
+	if len(some) > 0 {
+		children = append(children, AnyTags(some...))
+	}
+	return NewQueryExpr(d, And(children...))
 }
 
-// dedupTags sorts then compacts duplicates (in-place).
-func dedupTags(tags []int16) []int16 {
+// ── normalization ────────────────────────────────────────────────────────────
+
+func normalizeExpr(d *DB, e Expr) Expr {
+	switch e.op {
+	case opAllTags, opAnyTags, opNoTags:
+		tags := dedupKeys(slices.Clone(e.tags))
+		tags = collapse(d, e.op, tags)
+		return foldLeaf(e.op, tags)
+	case opAllTagsExact, opAnyTagsExact, opNoTagsExact:
+		// Exact leaves get dedup only: an ancestor and a descendant are
+		// independent under exact matching, so neither implies the other.
+		tags := dedupKeys(slices.Clone(e.tags))
+		return foldLeaf(e.op, tags)
+	case opAnd, opOr, opNor:
+		kids := make([]Expr, 0, len(e.exprs))
+		for i := range e.exprs {
+			kids = append(kids, normalizeExpr(d, e.exprs[i]))
+		}
+		return foldCompound(e.op, kids)
+	default: // opTrue, opFalse
+		return e
+	}
+}
+
+// collapse removes hierarchically-redundant tags from a leaf set.
+func collapse(d *DB, op exprOp, tags []Key) []Key {
+	switch op {
+	case opAllTags:
+		return keepMostSpecific(d, tags)
+	case opAnyTags, opNoTags:
+		return keepBroadest(d, tags)
+	}
+	return tags
+}
+
+// foldLeaf turns an empty leaf into the appropriate constant.
+func foldLeaf(op exprOp, tags []Key) Expr {
+	if len(tags) == 0 {
+		switch op {
+		case opAllTags, opAllTagsExact, opNoTags, opNoTagsExact:
+			// "has all of nothing" and "has none of nothing" are vacuously true.
+			return Expr{op: opTrue}
+		case opAnyTags, opAnyTagsExact:
+			// "has any of nothing" is false.
+			return Expr{op: opFalse}
+		}
+	}
+	return Expr{op: op, tags: tags}
+}
+
+// foldCompound applies boolean identities once the children are normalized.
+func foldCompound(op exprOp, kids []Expr) Expr {
+	switch op {
+	case opAnd:
+		var out []Expr
+		for _, k := range kids {
+			switch k.op {
+			case opFalse:
+				return Expr{op: opFalse}
+			case opTrue:
+				// drop
+			default:
+				out = append(out, k)
+			}
+		}
+		switch len(out) {
+		case 0:
+			return Expr{op: opTrue}
+		case 1:
+			return out[0]
+		default:
+			return Expr{op: opAnd, exprs: out}
+		}
+	case opOr:
+		var out []Expr
+		for _, k := range kids {
+			switch k.op {
+			case opTrue:
+				return Expr{op: opTrue}
+			case opFalse:
+				// drop
+			default:
+				out = append(out, k)
+			}
+		}
+		switch len(out) {
+		case 0:
+			return Expr{op: opFalse}
+		case 1:
+			return out[0]
+		default:
+			return Expr{op: opOr, exprs: out}
+		}
+	case opNor:
+		var out []Expr
+		for _, k := range kids {
+			switch k.op {
+			case opTrue:
+				// Nor is true only when every child is false.
+				return Expr{op: opFalse}
+			case opFalse:
+				// drop
+			default:
+				out = append(out, k)
+			}
+		}
+		if len(out) == 0 {
+			return Expr{op: opTrue}
+		}
+		// A single-child Nor is "not child" and cannot be collapsed further.
+		return Expr{op: opNor, exprs: out}
+	}
+	return Expr{op: op, exprs: kids}
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+// dedupKeys sorts then compacts duplicates (in place on the supplied slice).
+func dedupKeys(tags []Key) []Key {
 	slices.Sort(tags)
 	return slices.Compact(tags)
 }
 
-// keepMostSpecific removes tag x if another tag y in the set is more specific
-// (i.e. x is an ancestor of y), because requiring y already implies x via
-// ancestor closure.
-func keepMostSpecific(d *DB, tags []int16) []int16 {
+// keepMostSpecific removes tag x when another tag y in the set is more specific
+// (x is an ancestor of y): requiring y already implies x via ancestor closure.
+func keepMostSpecific(d *DB, tags []Key) []Key {
 	j := 0
 	for i, x := range tags {
 		redundant := false
@@ -171,10 +239,10 @@ func keepMostSpecific(d *DB, tags []int16) []int16 {
 	return tags[:j]
 }
 
-// keepBroadest removes tag x if another tag y in the set is broader (i.e. y is
-// an ancestor of x).  Used for none (ancestor ban subsumes descendant ban) and
-// some (ancestor match is easier to satisfy).
-func keepBroadest(d *DB, tags []int16) []int16 {
+// keepBroadest removes tag x when another tag y in the set is broader (y is an
+// ancestor of x). Used for none (an ancestor ban subsumes a descendant ban) and
+// some (an ancestor match is easier to satisfy).
+func keepBroadest(d *DB, tags []Key) []Key {
 	j := 0
 	for i, x := range tags {
 		redundant := false
