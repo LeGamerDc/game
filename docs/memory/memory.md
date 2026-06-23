@@ -1,13 +1,14 @@
 # Memory
 
-Last Updated: 2026-05-13
+Last Updated: 2026-06-22
 
 ## Current Focus
 
-Sched + demo 性能验证首轮已完成：`demo/scenario` 已新增 benchmark 专用技能组合与 `BenchmarkGridCombatScheduler`，并用相同 combat 负载初步对比串行、parallel-4、parallel-8 的 tick 效率。下一步若继续推进，应整理更正式的 benchstat/pprof 数据，并评估 allocation 热点与 worker pool 优化。
+新增**纯串行调度器** `serial/` 包：面向"开发/调试复杂度最低"的仅串行抽象，与并行 `sched/` 并列、不复用其 Logic 接口。设计与实现已落地并通过两轮 codex review（首轮抓到一个真 bug 已修）。下一步可选：接入手册（类似 sched/integration.md）、事件 slice 池化、连续溢出饥饿告警。注意 `demo/` 已在 commit `ed28f3b` 删除，本 memory 下方 demo 相关条目已过时。
 
 ## Latest State
 
+- **纯串行调度器 `serial/` 已实现并 review**：`serial/scheduler.go`（~294 行，核心 tick ~50 行）+ `serial/scheduler_test.go`（24 测试，含随机 soak）。模型 = capped serial BSP + actor 风格 typed inbox：Unit 只有 `Think(ctx, events) int64` 单入口、直读 world/其他单位、改自己状态、`ctx.Post/Poke` 把事件交给 owner 处理；无 Apply/Stage、无 Effect/Signal 拆分。计时用 `lib.HeapIndexMap`（每 unit 一条目，Think 返回权威 deadline，`delay<=0` 取消 timer）；tick 拆成 ≤maxSteps(默认3) 个 superstep 波次（事件双缓冲，S→S+1），超出溢出到下个 tick 且 `Overflow()` 计数。确定性：每波按 ref 升序处理，不泄漏 map/heap 迭代序。设计稿见 `docs/design/serial_scheduler.md`。三轮 web 调研确认其等价于 serial Pregel/BSP + Bevy `Events<T>` 双缓冲 + actor message-cycle。`go test ./... && go vet` 通过。
 - **Sched + demo 性能验证首轮完成**：`demo/scenario/skills.go` 新增 `AddBenchmarkAbilities`，包含低 CD 单体、群体伤害、短周期 burn buff 与 `SignalDamageDealt` 被动追击；`demo/scenario/benchmark_test.go` 新增 `BenchmarkGridCombatScheduler`，固定 16x16 / 32x32 / 84x84 grid，对比强制串行、parallel-4、parallel-8；84x84 用作约 7000 单位档位（7056 units）。
 - **Demo 当前验证结果**：`GOCACHE=/private/tmp/game-go-build-cache go test ./...` 通过；`GOCACHE=/private/tmp/game-go-build-cache go test -race ./demo/...` 通过；`GOCACHE=/private/tmp/game-go-build-cache go test -bench=BenchmarkGridCombatScheduler -benchmem -run=^$ -benchtime=500ms -count=3 ./demo/scenario` 通过。
 - **初步 benchmark 趋势**：Apple M5 上 16x16 串行约 2.81-2.83 ms/tick，parallel-4 约 0.85-0.88 ms/tick，parallel-8 约 0.84 ms/tick；32x32 串行约 12.9-13.1 ms/tick，parallel-4 约 3.25-3.26 ms/tick，parallel-8 约 2.83-2.85 ms/tick；84x84 串行约 123-125 ms/tick，parallel-4 约 26.7-26.8 ms/tick，parallel-8 约 23.6-24.2 ms/tick。并发路径已有清晰收益，但 alloc/op 仍高，后续适合用 pprof/benchstat 深挖。literal 7000x7000 会创建 4900 万 units，当前不应直接跑。
