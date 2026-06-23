@@ -2,11 +2,12 @@
 
 ## 前置约定
 
-- 本设计稿描述 Scheduler 的调度模型，涵盖并发和串行两种执行模式。
-- Logic 接口定义以 `sched/world.go` 为唯一权威来源。
+- 本设计稿描述并行 Scheduler（`sched/par` 包）的调度模型，涵盖并发和其内置串行快路径两种执行模式。
+  （另有独立的纯串行调度器 `sched/ser`，设计见 `docs/design/serial_scheduler.md`。）
+- Logic 接口定义以 `sched/par/world.go` 为唯一权威来源。
 - 并行 tick 整体设计（概念、所有权、数据分层）见 `docs/design/parallel.md`。
 - 设计稿与代码出现矛盾时，以代码为准。
-- 代码文件：`sched/scheduler.go`（核心调度循环）、`sched/scheduler_parallel.go`（并发路径）、`sched/scheduler_serial.go`（串行路径）、`sched/wheel.go`（timer wheel）、`sched/block_collector.go`（per-thread collector）、`sched/utils.go`（辅助类型）。
+- 代码文件：`sched/par/scheduler.go`（核心调度循环）、`sched/par/scheduler_parallel.go`（并发路径）、`sched/par/scheduler_serial.go`（串行路径）、`sched/par/wheel.go`（timer wheel）、`sched/par/block_collector.go`（per-thread collector）、`sched/par/utils.go`（辅助类型）。
 
 ## 设计目标
 

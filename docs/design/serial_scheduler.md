@@ -1,11 +1,12 @@
-# 纯串行调度器（serial package）设计稿
+# 纯串行调度器（sched/ser 包）设计稿
 
-> 定位：`sched/` 之外的**仅支持串行**的轻量调度抽象，目标是把"开发/调试复杂度"压到最低。
-> 代码权威：`serial/scheduler.go`、`serial/scheduler_test.go`。本文与代码冲突时以代码为准。
+> 定位：与并行版 `sched/par` 并列的**仅支持串行**的轻量调度抽象，目标是把"开发/调试复杂度"压到最低。
+> 两者都归在 `sched/` 下：`sched/par`（并行 BSP）、`sched/ser`（本文，纯串行）。
+> 代码权威：`sched/ser/scheduler.go`、`sched/ser/scheduler_test.go`。本文与代码冲突时以代码为准。
 
 ## 1. 为什么再做一个串行版
 
-`sched/` 是支持并发的 BSP 调度器，对 Logic 能力和世界做了完整建模；它内置的 `scheduler_serial.go`
+`sched/par` 是支持并发的 BSP 调度器，对 Logic 能力和世界做了完整建模；它内置的 `sched/par/scheduler_serial.go`
 只是"并发框架下单位较少时省掉并发开销"的快路径，**承担的复杂度和并行版一致**（Apply/Commit/Stage、
 block 分片、signal 双缓冲、递归 cascade、depth 预算……）。
 
@@ -152,4 +153,4 @@ Quake `nextthink` / Source `OnTakeDamage`（事件投到目标、owner 处理）
 - 事件 slice 目前每波丢弃后由 GC 回收；单位量大时可加 free-list 池化（当前刻意保持简单）。
 - 是否需要 per-unit 的"连续溢出 N 次"饥饿告警计数（目前只有全局 `Overflow()`）。
 - 是否提供 batch 版 `Tick(n)` 或固定步长驱动 helper。
-- 与 demo / 上层 framework 的接入手册（类似 `sched/integration.md`）待补。
+- 与 demo / 上层 framework 的接入手册（类似 `sched/par/integration.md`）待补。

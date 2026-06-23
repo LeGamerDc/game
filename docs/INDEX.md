@@ -14,7 +14,7 @@ Last Updated: 2026-06-22
 |------|------|--------|
 | `parallel.md` | 并行 tick 概念模型：BSP superstep、Logic=Owner 所有权、Think/Apply 两阶段、Effect 顺序无关性 | BSP, superstep, ownership, Think/Apply |
 | `scheduler.md` | Scheduler 实现级设计：并发/串行双模式、block-based effect 收集、LPT 负载均衡、StagedState、计算分解约束 | block collector, LPT, StagedState, ScheduleMeta |
-| `serial_scheduler.md` | 纯串行调度器（`serial/` 包）设计：Unit/World/Event 单相模型、message-to-owner、heap 一条目/unit、bounded superstep 波次、与 sched 边界、prior art | serial, superstep, event inbox, HeapIndexMap |
+| `serial_scheduler.md` | 纯串行调度器（`sched/ser` 包）设计：Unit/World/Event 单相模型、message-to-owner、heap 一条目/unit、bounded superstep 波次、与 `sched/par` 边界、prior art | serial, superstep, event inbox, HeapIndexMap |
 | `demo_combat_framework.md` | demo 战斗与技能框架设计稿：Unit/普通攻击/技能槽/buff/death 如何按 Scheduler 协议拆分 | demo, combat, ability, Unit |
 | `ability_system.md` | GAS 设计参考稿：完整 GAS 不再作为 `game/` 基础 package 落地，Attribute/Modifier 抽到 `attr/`，其余业务组合留给 demo | buff, modifier, attribute, ability |
 | `adaptation_guide.md` | 107 条逻辑链路适配分类指导手册，6 大分类 + 5 步判定流程 | adaptation, 6 categories, migration |

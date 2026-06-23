@@ -1,8 +1,8 @@
-// Package serial implements a single-threaded, easy-to-understand tick scheduler.
+// Package ser implements a single-threaded, easy-to-understand tick scheduler.
 //
-// It is a deliberately simpler sibling of the parallel sched package. Where
-// sched splits work into Think/Apply phases, buckets effects by owner, and
-// double-buffers signals to survive a BSP barrier, serial collapses all of that
+// It is a deliberately simpler sibling of the parallel scheduler in sched/par.
+// Where par splits work into Think/Apply phases, buckets effects by owner, and
+// double-buffers signals to survive a BSP barrier, ser collapses all of that
 // into ONE programming model that only makes sense single-threaded:
 //
 //   - A unit's only entry point is Think. Inside Think a unit may read the world
@@ -43,7 +43,7 @@
 // every Post/Emit also schedules its target into the wave that consumes it, so —
 // unlike Bevy's swap-and-clear buffers — an event is never silently dropped; it
 // either runs this tick or spills (with its inbox intact) to the next.
-package serial
+package ser
 
 import (
 	"slices"
@@ -111,7 +111,7 @@ type Scheduler[W any, E any, U Unit[W, E]] struct {
 	maxSteps int
 
 	heap  lib.HeapIndexMap[uint64, int64, int64] // ref -> deadline; one entry per unit
-	inbox map[uint64][]E                          // ref -> events queued for its next Think
+	inbox map[uint64][]E                         // ref -> events queued for its next Think
 
 	// superstep frontiers (reused across ticks)
 	frontier []uint64             // refs to think in the current wave (sorted before use)

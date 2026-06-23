@@ -1,4 +1,4 @@
-package sched
+package par
 
 import "github.com/legamerdc/game/lib"
 

@@ -1,4 +1,4 @@
-package serial
+package ser
 
 import (
 	"math/rand"

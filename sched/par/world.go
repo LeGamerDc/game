@@ -1,4 +1,4 @@
-package sched
+package par
 
 type (
 	EffectKind int32

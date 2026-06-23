@@ -1,4 +1,4 @@
-package sched
+package par
 
 import (
 	"sync/atomic"

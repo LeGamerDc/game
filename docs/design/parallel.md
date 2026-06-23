@@ -3,7 +3,7 @@
 ## 前置约定
 
 - 本设计稿只表达设计意图与约束，不包含代码
-- 接口定义以 `sched/world.go` 为唯一权威来源
+- 接口定义以 `sched/par/world.go` 为唯一权威来源
 - 设计稿与代码出现矛盾时，以代码为准
 - 相关理论抽象与术语沉淀见 [../references/parallel_theory.md](../references/parallel_theory.md)
 
