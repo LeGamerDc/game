@@ -272,7 +272,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Sequence All Success", func(t *testing.T) {
 		ctx := newTestCtx()
-		seq := NewSequence(successGuard, false,
+		seq := NewSequence(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task3", TaskSuccess)),
@@ -286,7 +286,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Sequence One Fail", func(t *testing.T) {
 		ctx := newTestCtx()
-		seq := NewSequence(successGuard, false,
+		seq := NewSequence(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskFail)),
 			NewTask(successGuard, newTestTaskCreator("task3", TaskSuccess)),
@@ -300,7 +300,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Sequence All Success", func(t *testing.T) {
 		ctx := newTestCtx()
-		seq := NewSequence(successGuard, false,
+		seq := NewSequence(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
 		)
@@ -313,7 +313,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Selector First Success", func(t *testing.T) {
 		ctx := newTestCtx()
-		sel := NewSelector(successGuard, false,
+		sel := NewSelector(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskFail)),
 		)
@@ -326,7 +326,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Selector All Fail", func(t *testing.T) {
 		ctx := newTestCtx()
-		sel := NewSelector(successGuard, false,
+		sel := NewSelector(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskFail)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskFail)),
 		)
@@ -339,7 +339,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Parallel All Success", func(t *testing.T) {
 		ctx := newTestCtx()
-		parallel := NewParallel(successGuard, MatchAll, 3,
+		parallel := NewParallel(successGuard, 3, 0, false,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task3", TaskSuccess)),
@@ -353,7 +353,7 @@ func TestBasicNodeTypes(t *testing.T) {
 
 	t.Run("Parallel One Success Required", func(t *testing.T) {
 		ctx := newTestCtx()
-		parallel := NewParallel(successGuard, MatchSuccess, 1,
+		parallel := NewParallel(successGuard, 1, 0, false,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskFail)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
 			NewTask(successGuard, newTestTaskCreator("task3", TaskFail)),
@@ -500,7 +500,7 @@ func TestRunningStateBehaviorTree(t *testing.T) {
 		ctx := newTestCtx()
 
 		// Sequence(Wait(5), Success)
-		seq := NewSequence(successGuard, false,
+		seq := NewSequence(successGuard,
 			NewTask(successGuard, newWaitTaskCreator(5)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
 		)
@@ -523,8 +523,8 @@ func TestRunningStateBehaviorTree(t *testing.T) {
 		ctx := newTestCtx()
 
 		// Selector(Sequence(Wait(3), Success), Wait(10))
-		sel := NewSelector(successGuard, false,
-			NewSequence(successGuard, false,
+		sel := NewSelector(successGuard,
+			NewSequence(successGuard,
 				NewTask(successGuard, newWaitTaskCreator(3)),
 				NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			),
@@ -630,7 +630,7 @@ func TestCancelBehavior(t *testing.T) {
 		}
 
 		// 并行执行，只需要1个成功就退出
-		parallel := NewParallel(successGuard, MatchSuccess, 1,
+		parallel := NewParallel(successGuard, 1, 0, false,
 			NewTask(successGuard, task1Creator),
 			NewTask(successGuard, task2Creator),
 			NewTask(successGuard, task3Creator),
@@ -711,7 +711,7 @@ func TestEventInterrupt(t *testing.T) {
 		ctx.time = 0
 
 		// 创建一个序列：成功任务 -> 可打断的等待任务 -> 成功任务
-		seq := NewSequence(successGuard, false,
+		seq := NewSequence(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskSuccess)),
 			NewTask(successGuard, newInterruptibleWaitTaskCreator(10, 1)),
 			NewTask(successGuard, newTestTaskCreator("task3", TaskSuccess)),
@@ -825,7 +825,7 @@ func TestEventInterrupt(t *testing.T) {
 			return &testTask{name: "taskB", result: TaskStatus(1)}, true
 		}
 
-		parallel := NewParallel(successGuard, MatchSuccess, 1,
+		parallel := NewParallel(successGuard, 1, 0, false,
 			NewTask(successGuard, taskACreator),
 			NewTask(successGuard, taskBCreator),
 		)
@@ -846,23 +846,23 @@ func TestComplexBehaviorTree(t *testing.T) {
 	setupNPCState(ctx)
 
 	// 构建复杂的NPC战士行为树
-	npcWarriorTree := NewSelector(successGuard, false,
+	npcWarriorTree := NewSelector(successGuard,
 		// Layer 2: 生命值过低时强制撤退 - 最高优先级
-		NewSequence(successGuard, false,
+		NewSequence(successGuard,
 			NewGuard[*testCtx, *testEvent](_guardFuncHealthBelow30),
 			NewTask(successGuard, newRetreatTaskCreator()),
 		),
 
 		// Layer 2: 战斗序列 - 第二优先级
-		NewSequence(successGuard, false,
+		NewSequence(successGuard,
 			NewGuard[*testCtx, *testEvent](_guardFuncInCombat),
-			NewSelector(successGuard, false,
+			NewSelector(successGuard,
 				// Layer 4: 近距离战斗序列
-				NewSequence(successGuard, false,
+				NewSequence(successGuard,
 					NewGuard[*testCtx, *testEvent](_guardFuncEnemyTooClose),
-					NewSelector(successGuard, false,
+					NewSelector(successGuard,
 						// Layer 6: 技能攻击序列
-						NewSequence(successGuard, false,
+						NewSequence(successGuard,
 							NewGuard[*testCtx, *testEvent](_guardFuncSkillReady),
 							NewGuard[*testCtx, *testEvent](_guardFuncHasMana),
 							NewTask(successGuard, newSkillAttackTaskCreator()),
@@ -872,7 +872,7 @@ func TestComplexBehaviorTree(t *testing.T) {
 					),
 				),
 				// Layer 4: 追击序列
-				NewSequence(successGuard, false,
+				NewSequence(successGuard,
 					NewGuard[*testCtx, *testEvent](_guardFuncEnemyInSight),
 					NewTask(successGuard, newChaseTaskCreator()),
 				),
@@ -880,19 +880,19 @@ func TestComplexBehaviorTree(t *testing.T) {
 		),
 
 		// Layer 2: 生命值恢复序列 - 第三优先级
-		NewSequence(successGuard, false,
+		NewSequence(successGuard,
 			NewGuard[*testCtx, *testEvent](_guardFuncNotInCombat),
 			NewGuard[*testCtx, *testEvent](_guardFuncHealthBelow80),
 			NewTask(successGuard, newHealTaskCreator()),
 		),
 
 		// Layer 2: 巡逻序列 - 最低优先级
-		NewSequence(successGuard, false,
+		NewSequence(successGuard,
 			NewGuard[*testCtx, *testEvent](_guardFuncNotInCombat),
 			NewGuard[*testCtx, *testEvent](_guardFuncNoEnemy),
-			NewSelector(successGuard, false,
+			NewSelector(successGuard,
 				// Layer 4: 到达目标点序列
-				NewSequence(successGuard, false,
+				NewSequence(successGuard,
 					NewGuard[*testCtx, *testEvent](_guardFuncAtDestination),
 					NewTask(successGuard, newSearchTaskCreator()),
 				),
@@ -951,8 +951,8 @@ func BenchmarkBehaviorTreeExecution(b *testing.B) {
 	ctx := newTestCtx()
 
 	// 构建一个中等复杂度的行为树用于基准测试
-	tree := NewSequence(successGuard, false,
-		NewSelector(successGuard, false,
+	tree := NewSequence(successGuard,
+		NewSelector(successGuard,
 			NewTask(successGuard, newTestTaskCreator("task1", TaskFail)),
 			NewTask(successGuard, newTestTaskCreator("task2", TaskSuccess)),
 		),
@@ -982,7 +982,7 @@ func TestNodeValidation(t *testing.T) {
 	assert.Error(t, err)
 
 	// 正常的Sequence应该通过验证
-	validSeq := NewSequence(successGuard, false,
+	validSeq := NewSequence(successGuard,
 		NewTask(successGuard, newTestTaskCreator("task", TaskSuccess)),
 	)
 

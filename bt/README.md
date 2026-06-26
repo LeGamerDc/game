@@ -81,7 +81,6 @@ func main() {
     // 创建行为树
     root := bt.NewSequence[*GameContext, GameEvent](
         nil, // 无前置条件
-        false, // 不随机
         bt.NewTask[*GameContext, GameEvent](
             func(c *GameContext) bool { return true }, // 总是通过的guard
             func(c *GameContext) (bt.LeafTaskI[*GameContext, GameEvent], bool) {
@@ -259,16 +258,36 @@ repeatNode := bt.NewRepeatUntilNSuccess(nil, 3, 10, childNode) // 最多10次，
 - **NewSelectorN**：选择器，需要N个子节点成功
 - **NewSequence**：序列器，所有子节点都要成功
 - **NewParallel**：并行执行多个子节点
+- **NewStochasticSelector/Sequence/SelectorN**：随机化遍历顺序（需注入 `rand`）
+- **NewReactiveSelector**：反应式选择器，子节点是**互斥备选方案**；高优先级子节点条件成立时抢占并 Cancel 正在运行的低优先级行为。用于**按优先级切换行为**（抢占条件挂在高优先级子节点上）。
+- **NewReactiveSequence**：反应式序列器，子节点是**前置条件 + 动作**；某个前置条件失效时立即打断正在运行的动作。用于**受持续条件守护的动作**。单条件守护单动作时与 `NewAlwaysGuard` 等价，后者更直接（见下）。
 
 ```go
-// 创建选择器
-selector := bt.NewSelector(nil, false, task1, task2, task3)
+// 创建选择器 / 序列器
+selector := bt.NewSelector(nil, task1, task2, task3)
+sequence := bt.NewSequence(nil, task1, task2, task3)
 
-// 创建序列器
-sequence := bt.NewSequence(nil, false, task1, task2, task3)
+// 随机选择器：注入 *math/rand/v2.Rand（保证可复现/可控）
+rng := rand.New(rand.NewPCG(seed, seed))
+shuffled := bt.NewStochasticSelector(nil, rng, task1, task2, task3)
 
-// 创建并行节点
-parallel := bt.NewParallel(nil, bt.MatchSuccess, 2, task1, task2, task3) // 需要2个成功
+// 反应式选择器：互斥备选方案，按优先级切换。highPriorityCond 成立时抢占并 Cancel 正在运行的 lowAction。
+reactiveSel := bt.NewReactiveSelector(nil,
+    bt.NewSequence(nil, bt.NewGuard[*GameContext, GameEvent](highPriorityCond), highAction),
+    lowAction,
+)
+
+// 反应式序列器：前置条件 + 动作。inRange / hasMana 任一在施法途中失效，立即打断 castSpell。
+// （单个前置条件守护单个动作时等价于 NewAlwaysGuard(cond, action)，后者更直接）
+reactiveSeq := bt.NewReactiveSequence(nil,
+    bt.NewGuard[*GameContext, GameEvent](inRange),
+    bt.NewGuard[*GameContext, GameEvent](hasMana),
+    castSpell,
+)
+
+// 并行节点：成功阈值 successRequire、失败阈值 failRequire(0=不设)、是否 failFast
+// 下例：3 个子节点任意 2 个成功即成功；不设独立失败阈值；无法再凑齐 2 个成功时立即失败
+parallel := bt.NewParallel(nil, 2, 0, true, task1, task2, task3)
 ```
 
 ### 叶节点
@@ -294,14 +313,25 @@ taskWithGuard := bt.NewTask(
 )
 ```
 
-### 计数模式
+### 并行节点的成功/失败阈值
 
-分支节点支持不同的计数模式：
+`NewParallel(g, successRequire, failRequire, failFast, ch...)` 用两个独立阈值描述并行结束条件：
 
-- `MatchSuccess`：只计算成功的子节点
-- `MatchFail`：只计算失败的子节点  
-- `MatchAll`：计算所有完成的子节点
-- `MatchNone`：不进行计数
+- `successRequire`：成功子树数达到该值，立即成功并 Cancel 其余仍在运行的子树。
+- `failRequire`：失败子树数达到该值，立即失败并 Cancel 其余子树；**`0` 表示不设独立失败阈值**
+  （多数场景只需关心成功阈值，失败交给「全部完成仍不足」或 `failFast` 兜底）。
+- `failFast`：为 true 时，一旦「已成功 + 仍在运行 < successRequire」（再也无法凑齐
+  successRequire 个成功）立即失败。
+- 全部完成仍未达到 successRequire：失败。
+
+常见组合（N 个子节点）：
+
+| 语义 | successRequire | failRequire | failFast |
+|------|----------------|-------------|----------|
+| 全部成功（AND） | N | 0 | true |
+| 任一成功（OR） | 1 | 0 | false |
+| M 选成功 | M | 0 | true |
+| 需要独立失败阈值 | M | K | 任意 |
 
 ### 栈重建
 
@@ -407,13 +437,13 @@ func enemyInRange(c *GameContext) bool {
 
 func main() {
     // 构建行为树
-    tree := bt.NewSelector[*GameContext, GameEvent](nil, false,
+    tree := bt.NewSelector[*GameContext, GameEvent](nil,
         // 有敌人时的战斗行为
-        bt.NewSequence[*GameContext, GameEvent](nil, false,
+        bt.NewSequence[*GameContext, GameEvent](nil,
             bt.NewGuard[*GameContext, GameEvent](hasEnemy),
-            bt.NewSelector[*GameContext, GameEvent](nil, false,
+            bt.NewSelector[*GameContext, GameEvent](nil,
                 // 敌人在攻击范围内则攻击
-                bt.NewSequence[*GameContext, GameEvent](nil, false,
+                bt.NewSequence[*GameContext, GameEvent](nil,
                     bt.NewGuard[*GameContext, GameEvent](enemyInRange),
                     bt.NewTask[*GameContext, GameEvent](nil, newAttackTask),
                 ),
@@ -542,10 +572,21 @@ func NewAlwaysGuard[C Ctx, E EI](g Guard[C], ch *Node[C, E]) *Node[C, E]
 func NewGuard[C Ctx, E EI](g Guard[C]) *Node[C, E]
 
 // 分支节点
-func NewSelector[C Ctx, E EI](g Guard[C], shuffle bool, ch ...*Node[C, E]) *Node[C, E]
-func NewSelectorN[C Ctx, E EI](g Guard[C], n int32, shuffle bool, ch ...*Node[C, E]) *Node[C, E]
-func NewSequence[C Ctx, E EI](g Guard[C], shuffle bool, ch ...*Node[C, E]) *Node[C, E]
-func NewParallel[C Ctx, E EI](g Guard[C], mode CountMode, require int32, ch ...*Node[C, E]) *Node[C, E]
+func NewSelector[C Ctx, E EI](g Guard[C], ch ...*Node[C, E]) *Node[C, E]
+func NewSelectorN[C Ctx, E EI](g Guard[C], n int32, ch ...*Node[C, E]) *Node[C, E]
+func NewSequence[C Ctx, E EI](g Guard[C], ch ...*Node[C, E]) *Node[C, E]
+func NewParallel[C Ctx, E EI](g Guard[C], successRequire, failRequire int32, failFast bool, ch ...*Node[C, E]) *Node[C, E]
+
+// 随机分支（注入 rand，保证可复现）
+func NewStochasticSelector[C Ctx, E EI](g Guard[C], rng Rand, ch ...*Node[C, E]) *Node[C, E]
+func NewStochasticSelectorN[C Ctx, E EI](g Guard[C], n int32, rng Rand, ch ...*Node[C, E]) *Node[C, E]
+func NewStochasticSequence[C Ctx, E EI](g Guard[C], rng Rand, ch ...*Node[C, E]) *Node[C, E]
+
+// 反应式分支（每次 update 从头重评，支持高优先级抢占）
+// Selector: 子节点是互斥备选方案，高优先级条件成立时抢占低优先级行为（按优先级切换）
+// Sequence: 子节点是前置条件+动作，前置失效时打断动作（单条件场景等价于 AlwaysGuard）
+func NewReactiveSelector[C Ctx, E EI](g Guard[C], ch ...*Node[C, E]) *Node[C, E]
+func NewReactiveSequence[C Ctx, E EI](g Guard[C], ch ...*Node[C, E]) *Node[C, E]
 
 // 叶节点
 func NewTask[C Ctx, E EI](g Guard[C], task TaskCreator[C, E]) *Node[C, E]

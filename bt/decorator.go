@@ -187,9 +187,19 @@ func (x *task[C, E]) Execute(c C, _ *TaskI[C, E], from TaskStatus) TaskStatus {
 			return s
 		}
 		var ok bool
-		if x.tt, ok = x.n.Task(c); !ok {
+		// A creator must return a non-nil leaf on success; a nil leaf would
+		// nil-panic at x.tt.Execute below, so treat it as a creation failure.
+		if x.tt, ok = x.n.Task(c); !ok || x.tt == nil {
 			return TaskFail
 		}
 	}
-	return x.tt.Execute(c)
+	// A leaf must report Running (>0) / Success / Fail, never TaskNew (0): the
+	// engine reads TaskNew as "a child was pushed" and would re-enter (and
+	// re-create) this task forever. Convert the illegal return into a failure so a
+	// misbehaving leaf fails only its own subtree instead of hanging the tick; it
+	// is then popped and still receives OnComplete (no leak).
+	if st := x.tt.Execute(c); st != TaskNew {
+		return st
+	}
+	return TaskFail
 }
